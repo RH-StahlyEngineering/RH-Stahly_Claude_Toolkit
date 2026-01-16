@@ -1,0 +1,20 @@
+# Claude Code - Sensitive/Temporary files
+.claude/.credentials.json
+.claude/.update.lock
+.claude/cache/
+.claude/debug/
+.claude/file-history/
+.claude/history.jsonl
+.claude/paste-cache/
+.claude/projects/
+.claude/shell-snapshots/
+.claude/stats-cache.json
+.claude/statsig/
+.claude/todos/
+
+# Keep these (not ignored):
+# .claude/agents/
+# .claude/commands/
+# .claude/plugins/
+# .claude/settings.json
+# .claude/skills/

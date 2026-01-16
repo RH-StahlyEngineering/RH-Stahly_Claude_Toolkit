@@ -1,0 +1,59 @@
+{
+  "version": 2,
+  "plugins": {
+    "context7@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "C:\\Users\\rharbach\\.claude\\plugins\\cache\\claude-plugins-official\\context7\\ee2f72662645",
+        "version": "ee2f72662645",
+        "installedAt": "2025-12-29T22:46:29.730Z",
+        "lastUpdated": "2026-01-15T15:48:03.509Z"
+      }
+    ],
+    "github@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "C:\\Users\\rharbach\\.claude\\plugins\\cache\\claude-plugins-official\\github\\ee2f72662645",
+        "version": "ee2f72662645",
+        "installedAt": "2026-01-06T02:29:17.939Z",
+        "lastUpdated": "2026-01-15T15:48:03.519Z"
+      }
+    ],
+    "commit-commands@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "C:\\Users\\rharbach\\.claude\\plugins\\cache\\claude-plugins-official\\commit-commands\\ee2f72662645",
+        "version": "ee2f72662645",
+        "installedAt": "2026-01-06T19:21:44.112Z",
+        "lastUpdated": "2026-01-15T15:48:03.538Z"
+      }
+    ],
+    "frontend-design@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "C:\\Users\\rharbach\\.claude\\plugins\\cache\\claude-plugins-official\\frontend-design\\ee2f72662645",
+        "version": "ee2f72662645",
+        "installedAt": "2026-01-06T19:22:32.201Z",
+        "lastUpdated": "2026-01-15T15:48:03.552Z"
+      }
+    ],
+    "code-review@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "C:\\Users\\rharbach\\.claude\\plugins\\cache\\claude-plugins-official\\code-review\\ee2f72662645",
+        "version": "ee2f72662645",
+        "installedAt": "2026-01-06T19:23:46.087Z",
+        "lastUpdated": "2026-01-15T15:48:03.565Z"
+      }
+    ],
+    "security-guidance@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "C:\\Users\\rharbach\\.claude\\plugins\\cache\\claude-plugins-official\\security-guidance\\ee2f72662645",
+        "version": "ee2f72662645",
+        "installedAt": "2026-01-06T19:24:01.441Z",
+        "lastUpdated": "2026-01-15T15:48:03.577Z"
+      }
+    ]
+  }
+}
