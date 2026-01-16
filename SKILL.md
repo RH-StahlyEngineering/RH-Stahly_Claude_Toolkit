@@ -16,9 +16,12 @@ python scripts/dxf_analyze.py drawing.dxf
 # Extract survey points
 python scripts/dxf_cogo.py drawing.dxf --layer "V-*"
 
-# Label survey points from CSV (PNEZD format)
+# Label survey points from CSV (PNEZD format) - DWG output (recommended)
 python scripts/parse_csv_pnezd.py points.csv > points.json
 # (analyze points and create decisions.json)
+python scripts/create_labels_dwg.py decisions.json --scale 40 --output labeled.dwg
+
+# Label survey points from CSV - DXF fallback
 python scripts/create_labels.py decisions.json --scale 40 --output labeled.dxf
 
 # Label survey points from DXF (1"=40' scale)
@@ -49,7 +52,9 @@ python scripts/dxf_hatch.py hatch-all drawing.dxf --layer "V-*" --output hatched
 | `dxf_query.py` | Query by layer pattern, type, bbox, handle, proximity |
 | `label_dxf.py` | Auto-label survey points with MULTILEADER annotations |
 | `parse_csv_pnezd.py` | Parse CSV files in PNEZD format to JSON |
-| `create_labels.py` | Create MULTILEADER labels from decisions JSON |
+| `create_labels_dwg.py` | **Primary**: Create MLEADERs via AutoCAD (native DWG) |
+| `create_labels.py` | **Fallback**: Create MLEADERs via ezdxf (DXF) |
+| `create_mleaders.lsp` | AutoLISP script for native MLEADER creation |
 
 Run any script with `--help` for full options.
 
@@ -79,9 +84,23 @@ Parse CSV files with Point, Northing, Easting, Elevation, Description columns:
 # Parse CSV to JSON (filters for "/" in description)
 python scripts/parse_csv_pnezd.py points.csv
 
-# Create labels (template-only mode - no source DXF needed)
+# Create labels - DWG (recommended, uses native AutoCAD MLEADER command)
+python scripts/create_labels_dwg.py decisions.json --scale 40 --output labeled.dwg
+
+# Create labels - DXF fallback (if AcCoreConsole unavailable)
 python scripts/create_labels.py decisions.json --scale 40 --output labeled.dxf
 ```
+
+### Why DWG is Preferred
+
+The DWG output uses AutoCAD's native MLEADER command via AcCoreConsole, which:
+- Creates fully functional annotative MLEADERs
+- Supports copy/paste (Ctrl+C) correctly
+- Works with XREF without conversion
+- Scales leader lines with annotative text
+
+The DXF fallback uses ezdxf which has known limitations with annotative MLEADERs
+due to undocumented proxy graphics requirements.
 
 ### From DXF
 
@@ -133,6 +152,8 @@ pip install ezdxf
 
 ## Limitations
 
-- DXF only (no DWG)
+- **DXF manipulation**: Python ezdxf library (no DWG support)
+- **DWG output**: Requires AutoCAD/Civil 3D installation (uses AcCoreConsole)
 - No rendering/visualization
 - Civil 3D proxy objects (AECC_*) stored but not interpreted
+- Annotative MULTILEADER in DXF has known limitations (use DWG for full support)
