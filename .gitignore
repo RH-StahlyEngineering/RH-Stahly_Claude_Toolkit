@@ -1,0 +1,11 @@
+# AutoCAD lock files
+*.dwl
+*.dwl2
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Temp files
+*.tmp
+*.bak
