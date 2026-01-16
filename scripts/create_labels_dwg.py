@@ -120,12 +120,17 @@ def create_script_file(lisp_path, csv_path, output_dwg, script_path):
         output_dwg: Path for output DWG
         script_path: Path to write script file
     """
-    # Convert paths to forward slashes for AutoLISP
-    lisp_path_str = str(lisp_path).replace('\\', '/')
-    csv_path_str = str(csv_path).replace('\\', '/')
-    output_dwg_str = str(output_dwg).replace('\\', '/')
+    # Convert paths to absolute and forward slashes for AutoLISP
+    lisp_path_str = str(lisp_path.resolve()).replace('\\', '/')
+    csv_path_str = str(csv_path.resolve()).replace('\\', '/')
+    output_dwg_str = str(output_dwg.resolve()).replace('\\', '/')
 
+    # Script uses SECURELOAD 0 to allow loading LISP from any path
+    # Then loads and runs the LISP script
     script_content = f''';;; AcCoreConsole script for MLEADER batch creation
+;;; Disable SECURELOAD to allow LISP loading from any path
+(setvar "SECURELOAD" 0)
+
 ;;; Load the LISP script
 (load "{lisp_path_str}")
 
@@ -339,6 +344,9 @@ def main():
                 ]
             }))
             sys.exit(0)
+
+        # Ensure output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Create AcCoreConsole script
         create_script_file(LISP_SCRIPT, csv_path, output_path, script_path)

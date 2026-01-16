@@ -1,0 +1,15 @@
+;;; Manual script for MLEADER creation
+;;; Drag this file into AutoCAD with the template DWG open
+;;;
+;;; Steps:
+;;; 1. Open the template DWG in AutoCAD
+;;; 2. Drag this .scr file into the drawing window
+;;; 3. Wait for completion
+;;; 4. Check the output file location
+
+(load "C:/Users/rharbach/.claude/skills/dxf/scripts/create_mleaders.lsp")
+(c:CREATE-MLEADERS "test/sample-LABELS-labels.csv")
+_SAVEAS
+2018
+test/sample-LABELS.dwg
+

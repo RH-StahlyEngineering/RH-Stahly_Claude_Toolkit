@@ -114,9 +114,8 @@
     (command "._LAYER" "_Make" layer ""))
   (setvar "CLAYER" layer)
 
-  ;; Set MLEADERSTYLE if specified
-  (if (and mleader-style (tblsearch "MLEADERSTYLE" mleader-style))
-    (setvar "CMLEADERSTYLE" mleader-style))
+  ;; Note: MLEADERSTYLE is set by the template drawing
+  ;; We don't change it here - use whatever style is current
 
   ;; Calculate offset for text landing (20 units at 45 degrees from point)
   ;; This offset will be adjusted by annotative scale automatically
@@ -259,11 +258,12 @@
   ;; Create the labels
   (c:CREATE-MLEADERS csv-path)
 
-  ;; Save the drawing
+  ;; Save the drawing using SAVE command (simpler, avoids format prompts)
   (if output-dwg
     (progn
       (princ (strcat "\nSaving to: " output-dwg))
-      (command "._SAVEAS" "2018" output-dwg)
+      ;; Use SAVEAS with DWG format, empty string accepts default format
+      (command "._SAVEAS" "" output-dwg)
       (princ "\nDone."))
     (princ "\nWarning: No output path specified, drawing not saved."))
 

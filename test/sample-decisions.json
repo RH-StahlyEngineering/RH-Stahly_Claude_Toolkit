@@ -1,0 +1,35 @@
+{
+  "mleader_style": "Annotative-Simplex",
+  "labels": [
+    {
+      "point_num": "10",
+      "position": {"x": 1614648.059, "y": 1147609.723, "z": 3508.736},
+      "type": "presentation",
+      "label_text": "CP 10"
+    },
+    {
+      "point_num": "2001",
+      "position": {"x": 1615076.699, "y": 1147651.484, "z": 3509.052},
+      "type": "presentation",
+      "label_text": "RIM ELEV = 3509.05'"
+    },
+    {
+      "point_num": "2001",
+      "position": {"x": 1615076.699, "y": 1147651.484, "z": 3509.052},
+      "type": "drafter",
+      "label_text": "center of cover"
+    },
+    {
+      "point_num": "4005",
+      "position": {"x": 1614920.500, "y": 1147780.250, "z": 3510.957},
+      "type": "presentation",
+      "label_text": "FFB = 3510.96'"
+    },
+    {
+      "point_num": "4005",
+      "position": {"x": 1614920.500, "y": 1147780.250, "z": 3510.957},
+      "type": "drafter",
+      "label_text": "gym entrance"
+    }
+  ]
+}
