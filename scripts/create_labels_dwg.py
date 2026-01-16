@@ -351,11 +351,20 @@ def main():
         # Create AcCoreConsole script
         create_script_file(LISP_SCRIPT, csv_path, output_path, script_path)
 
-        # Run AcCoreConsole
-        print(f"\nRunning AcCoreConsole...", file=sys.stderr)
+        # Run AcCoreConsole with progress feedback
+        estimated_time = 30 + label_count * 2  # Civil 3D load + ~2s per label
+        print(f"\n{'='*60}", file=sys.stderr)
+        print(f"Creating {label_count} MULTILEADER labels via AcCoreConsole...", file=sys.stderr)
+        print(f"{'='*60}", file=sys.stderr)
         print(f"  Template: {template_path}", file=sys.stderr)
-        print(f"  Script: {script_path}", file=sys.stderr)
         print(f"  Output: {output_path}", file=sys.stderr)
+        print(f"", file=sys.stderr)
+        print(f"  NOTE: Civil 3D/AutoCAD takes 30-60 seconds to load", file=sys.stderr)
+        print(f"        before processing begins. This is normal.", file=sys.stderr)
+        print(f"", file=sys.stderr)
+        print(f"  Estimated time: {estimated_time} seconds ({estimated_time // 60}m {estimated_time % 60}s)", file=sys.stderr)
+        print(f"  Please wait - DO NOT interrupt the process!", file=sys.stderr)
+        print(f"{'='*60}", file=sys.stderr)
 
         success, stdout, stderr = run_accoreconsole(
             accore_path, template_path, script_path, args.timeout
