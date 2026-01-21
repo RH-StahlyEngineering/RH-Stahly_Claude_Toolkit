@@ -1,11 +1,11 @@
 ---
-name: dxf
-description: DXF file analysis and survey point labeling for Civil 3D. Requires AutoCAD/Civil 3D for MULTILEADER creation. Use when users need to analyze DXF files, extract COGO points, query entities, or create survey point labels via AutoCAD.
+name: label-CADD
+description: Survey point labeling for Civil 3D using AutoCAD's native MLEADER command. Creates MULTILEADER annotations from CSV survey data (PNEZD format) via AcCoreConsole. Also includes read-only DXF analysis utilities.
 ---
 
-# DXF Analysis & Survey Labeling Skill
+# Survey Point Labeling Skill (label-CADD)
 
-Analyze AutoCAD DXF files and create survey point labels via AutoCAD/Civil 3D.
+Create survey point MULTILEADER labels via AutoCAD/Civil 3D.
 
 ## Why AutoCAD is Required
 

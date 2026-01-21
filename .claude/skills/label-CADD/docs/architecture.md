@@ -132,7 +132,7 @@ Point#,X,Y,Z,Label_Text,Type,Layer,Color
 ## File Structure
 
 ```
-~/.claude/skills/dxf/
+~/.claude/skills/label-CADD/
 ├── scripts/
 │   ├── create_mleaders.lsp       # AutoLISP MULTILEADER generator
 │   ├── create_labels_dwg.py      # Python wrapper for AcCoreConsole

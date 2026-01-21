@@ -157,7 +157,7 @@ Full semantic analysis required - NEVER skip.
 Run the parsing script to extract points with "/" in their description:
 
 ```bash
-python ~/.claude/skills/dxf/scripts/parse_csv_pnezd.py <csv-path>
+python ~/.claude/skills/label-CADD/scripts/parse_csv_pnezd.py <csv-path>
 ```
 
 **If this fails, STOP IMMEDIATELY. Analyze the error, explain it to the user, suggest a fix, and tell them to reprompt.**
@@ -228,7 +228,7 @@ Points with dual labels get TWO rows (one presentation, one drafter).
 Run the labeling script:
 
 ```bash
-python ~/.claude/skills/dxf/scripts/create_labels.py <decisions.json> --scale N --output <output.dxf>
+python ~/.claude/skills/label-CADD/scripts/create_labels_dwg.py <decisions.json> --scale N --output <output.dwg>
 ```
 
 **If this fails, STOP IMMEDIATELY. Analyze the error, explain it to the user, suggest a fix, and tell them to reprompt.**
@@ -237,8 +237,8 @@ python ~/.claude/skills/dxf/scripts/create_labels.py <decisions.json> --scale N 
 <options>
 ## Options
 
-- `--scale N`: Scale factor (default: 20 for 1"=20') - multiplies paper-space dimensions
-- `--output PATH`: Output file path (defaults to `<csv-basename>-LABELS.dxf`)
+- `--scale N`: Scale factor (default: 40 for 1"=40') - multiplies paper-space dimensions
+- `--output PATH`: Output file path (defaults to `<csv-basename>-LABELS.dwg`)
 - `--from-csv PATH`: Skip analysis and use decisions from a corrected CSV file
 </options>
 
@@ -247,11 +247,12 @@ python ~/.claude/skills/dxf/scripts/create_labels.py <decisions.json> --scale N 
 
 Two files are always produced:
 
-1. **DXF file** (`<basename>-LABELS.dxf`):
-   - MULTILEADER annotations for each labeled point
+1. **DWG file** (`<basename>-LABELS.dwg`):
+   - MULTILEADER annotations created natively by AutoCAD
    - Presentation labels: Layer G-ANNO, ByLayer color, ALL CAPS
    - Drafter notes: Layer 0, RED color, lowercase
    - Uses "Annotative-Simplex" MLEADER style
+   - Full annotative support (copy, XREF, scaling all work correctly)
 
 2. **Decision CSV** (`<basename>-decisions.csv`):
    - Complete table of all labeling decisions
@@ -272,7 +273,7 @@ If initial labeling decisions need corrections:
    - Modify `Label_Text` as needed
    - Add/remove rows for dual labels
 4. Save the corrected CSV
-5. Re-run: `python ~/.claude/skills/dxf/scripts/create_labels.py --from-csv <corrected.csv> --output <output.dxf>`
+5. Re-run: `python ~/.claude/skills/label-CADD/scripts/create_labels_dwg.py --from-csv <corrected.csv> --output <output.dwg>`
 </correction_workflow>
 
 <verification>
