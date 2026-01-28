@@ -120,12 +120,20 @@ Download file or folder from remote repository to local `.claude`.
 Upload file or folder from local `.claude` to remote repository.
 
 **Steps:**
-1. **Validate**: Ensure `$1` is provided and exists locally
-   ```bash
-   test -e "C:/Users/rharbach/.claude/$1" || echo "Local path not found: $1"
-   ```
+1. **Validate**: Ensure `$1` is provided.
 
-2. **Check for remote conflict**:
+2. **Determine source** (global vs project):
+   - Check if path exists in project `.claude/$1`
+   - Check if path exists in global `C:/Users/rharbach/.claude/$1`
+   - If exists in both, use AskUserQuestion: "Found in both locations. Push from?"
+     Options:
+     - Global (`C:/Users/rharbach/.claude/`)
+     - Project (`./.claude/`)
+   - If exists in only one, use that location
+   - If exists in neither, report: "Local path not found: $1"
+   - Set `$LOCAL_BASE` accordingly for remaining steps.
+
+3. **Check for remote conflict**:
    ```bash
    gh api repos/RH-StahlyEngineering/RH-Stahly_Claude_Toolkit/contents/.claude/$1 2>/dev/null
    ```
@@ -133,7 +141,7 @@ Upload file or folder from local `.claude` to remote repository.
    - "Remote file already exists with different content. Overwrite?"
    - Options: [Yes - overwrite remote, No - cancel, Show diff]
 
-3. **Execute git workflow**:
+4. **Execute git workflow**:
    ```bash
    # Create temp directory
    TEMP_DIR=$(mktemp -d)
@@ -146,7 +154,7 @@ Upload file or folder from local `.claude` to remote repository.
    mkdir -p ".claude/$(dirname "$1")"
 
    # Copy file(s)
-   cp -r "C:/Users/rharbach/.claude/$1" ".claude/$1"
+   cp -r "$LOCAL_BASE/$1" ".claude/$1"
 
    # Commit and push
    git add ".claude/$1"
@@ -158,7 +166,7 @@ Upload file or folder from local `.claude` to remote repository.
    rm -rf "$TEMP_DIR"
    ```
 
-4. **Handle push rejection**:
+5. **Handle push rejection**:
    If `git push` fails with "rejected" or "non-fast-forward":
    - Abort the operation
    - Report: "Push rejected - remote has changes not in local"
@@ -167,7 +175,7 @@ Upload file or folder from local `.claude` to remote repository.
      2. Force push (overwrite remote)
      3. Abort (investigate manually)
 
-5. **Report success**: "✅ Successfully pushed $1 to remote repository"
+6. **Report success**: "✅ Successfully pushed $1 to remote repository"
 
 ---
 
