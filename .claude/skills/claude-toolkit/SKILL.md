@@ -1,16 +1,38 @@
 ---
 name: claude-toolkit
 description: Sync .claude assets with RH-Stahly_Claude_Toolkit GitHub repo. Pull agents, commands, skills from remote or push local changes.
-argument-hint: <pull|push|list|diff|sync> [path]
 disable-model-invocation: true
 allowed-tools: Read, Write, Bash(gh *), Bash(git *), Bash(mkdir *), Bash(rm *), Bash(cp *), Bash(mktemp *), Bash(cat *), Bash(base64 *), Bash(sha256sum *), AskUserQuestion, Glob
-context: fork
+context: conversation
 agent: general-purpose
 ---
 
 # Claude Toolkit Sync
 
 Bidirectional sync between local `.claude` folder and the RH-Stahly_Claude_Toolkit GitHub repository.
+
+## Understanding User Intent
+
+**IMPORTANT:** Users can invoke this skill with natural language. You must interpret their intent and execute the appropriate action. Do NOT require exact command syntax.
+
+**Examples of natural language requests:**
+- "push the new skill" → PUSH action, infer path from recent context
+- "push it" → PUSH action, infer path from conversation
+- "upload my changes" → PUSH action
+- "get the pdf skill" → PULL action, path = `skills/pdf`
+- "download the meta-agent" → PULL action, path = `agents/meta-agent.md`
+- "what's on the remote?" → LIST action
+- "show me what skills are available" → LIST action, path = `skills`
+- "compare my local changes" → DIFF action
+- "sync everything" → SYNC action
+
+**When the path is ambiguous:**
+1. Check the conversation context for recently created/modified files
+2. If still unclear, use AskUserQuestion to clarify
+
+**When the action is ambiguous:**
+1. Default to the most likely action based on context
+2. If truly unclear, use AskUserQuestion with options
 
 ## Configuration
 
@@ -23,23 +45,18 @@ PROJECT_LOCAL_BASE=".claude"  # Relative to current working directory
 SYNCABLE_FOLDERS="agents commands skills plugins"
 ```
 
-## Arguments
+## Actions
 
-- `$0` or `$ARGUMENTS[0]` = subcommand (list, pull, push, diff, sync)
-- `$1` or `$ARGUMENTS[1]` = optional path (relative to .claude/)
-
-## Commands
-
-Execute the appropriate subcommand based on `$0`:
+Determine which action to perform based on user intent:
 
 ---
 
-### LIST (`$0` = "list")
+### LIST (user wants to see what's on the remote)
 
 List contents of the remote repository's `.claude` folder.
 
 **Steps:**
-1. Determine path: If `$1` is empty, list root `.claude/`. Otherwise list `.claude/$1`
+1. Determine path from user request (e.g., "show me skills" → `skills`, "what's available" → root)
 2. Execute API call:
    ```bash
    gh api repos/RH-StahlyEngineering/RH-Stahly_Claude_Toolkit/contents/.claude/$1 \
@@ -62,12 +79,12 @@ List contents of the remote repository's `.claude` folder.
 
 ---
 
-### PULL (`$0` = "pull")
+### PULL (user wants to download/get something from remote)
 
 Download file or folder from remote repository to local `.claude`.
 
 **Steps:**
-1. **Validate**: Ensure `$1` is provided. If empty, show: "Usage: /claude-toolkit pull <path>"
+1. **Determine path**: Extract from user request or conversation context. If unclear, use AskUserQuestion to clarify what they want to pull.
 
 2. **Determine type** (file or folder):
    ```bash
@@ -115,12 +132,16 @@ Download file or folder from remote repository to local `.claude`.
 
 ---
 
-### PUSH (`$0` = "push")
+### PUSH (user wants to upload/save something to remote)
 
 Upload file or folder from local `.claude` to remote repository.
 
 **Steps:**
-1. **Validate**: Ensure `$1` is provided.
+1. **Determine path**:
+   - Extract from user request (e.g., "push the pdf skill" → `skills/pdf`)
+   - Check conversation context for recently created/modified files
+   - If user says "push it" or "push the new skill", look back in conversation for what was just created
+   - If still unclear, use AskUserQuestion to clarify
 
 2. **Determine source** (global vs project):
    - Check if path exists in project `.claude/$1`
@@ -179,14 +200,14 @@ Upload file or folder from local `.claude` to remote repository.
 
 ---
 
-### DIFF (`$0` = "diff")
+### DIFF (user wants to compare local vs remote)
 
 Compare local and remote `.claude` contents.
 
 **Steps:**
 1. **Determine scope**:
-   - If `$1` provided: diff only that path
-   - If `$1` empty: diff all syncable folders (agents, commands, skills, plugins)
+   - If user specifies a path (e.g., "compare my agents"): diff only that path
+   - If user says "compare everything" or is vague: diff all syncable folders (agents, commands, skills, plugins)
 
 2. **Build file lists**:
    - Local files: Use `find` or Glob on local path
@@ -222,7 +243,7 @@ Compare local and remote `.claude` contents.
 
 ---
 
-### SYNC (`$0` = "sync")
+### SYNC (user wants full bidirectional sync)
 
 Interactive bidirectional sync with conflict resolution.
 
@@ -325,13 +346,27 @@ Interactive bidirectional sync with conflict resolution.
 
 ## Examples
 
-```bash
-/claude-toolkit list                     # List all remote .claude contents
-/claude-toolkit list agents              # List remote agents
-/claude-toolkit pull agents/meta-agent.md  # Pull single file
-/claude-toolkit pull skills/pdf          # Pull entire folder
-/claude-toolkit push commands/new-cmd.md # Push file to remote
-/claude-toolkit diff                     # Compare all syncable content
-/claude-toolkit diff agents              # Compare only agents folder
-/claude-toolkit sync                     # Interactive full sync
+**Natural language (preferred):**
+```
+/claude-toolkit what's on the remote?
+/claude-toolkit show me the available skills
+/claude-toolkit pull the pdf skill
+/claude-toolkit get the meta-agent
+/claude-toolkit push the new skill I just created
+/claude-toolkit push it
+/claude-toolkit upload my changes to commands
+/claude-toolkit compare my local vs remote
+/claude-toolkit sync everything
+```
+
+**Explicit paths (also supported):**
+```
+/claude-toolkit list
+/claude-toolkit list agents
+/claude-toolkit pull agents/meta-agent.md
+/claude-toolkit pull skills/pdf
+/claude-toolkit push commands/new-cmd.md
+/claude-toolkit diff
+/claude-toolkit diff agents
+/claude-toolkit sync
 ```
