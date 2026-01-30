@@ -101,6 +101,50 @@ npm --version
 
 **Step 5:** Restart Claude Code for changes to take effect.
 
+**Step 6:** Configure ccstatusline widgets (see next section).
+
+## Configuring ccstatusline Widgets
+
+The `ccstatusline` package has an interactive TUI for customizing which widgets display and how they appear.
+
+### Running the Configuration TUI
+
+```bash
+npx ccstatusline@latest
+```
+
+This opens an interactive menu to select and configure widgets.
+
+### Available Context Widgets
+
+| Widget | Display | Example |
+|--------|---------|---------|
+| Context Length | Raw token count | `Ctx: 29.7k` |
+| Context Percentage | Usage as percentage | `Ctx: 35.0%` |
+| Context Percentage (usable) | Percentage accounting for 80% auto-compact threshold | `Ctx: 43.8%` |
+
+### Switching Between Percentage and Tokens
+
+If your status line shows tokens (e.g., `29.7k`) but you want percentage (e.g., `35.0%`):
+
+1. Run `npx ccstatusline@latest`
+2. Navigate to widget selection
+3. Choose **Context Percentage** instead of **Context Length**
+4. Press `l` to toggle between usage percentage and remaining percentage
+5. Save and exit
+
+The configuration persists after setup.
+
+### Other ccstatusline Features
+
+- **Powerline mode** - Beautiful powerline-style separators
+- **Themes** - Built-in color themes
+- **Git status** - Shows current branch and repo state
+- **Model name** - Displays active Claude model
+- **Session duration** - Time elapsed in session
+
+For full documentation: https://github.com/sirmalloc/ccstatusline
+
 ## Copying Configuration Between Machines
 
 **Option A: Copy just the statusLine setting**
@@ -140,6 +184,11 @@ To the same location on the target machine.
 **Changes not taking effect:**
 - Restart Claude Code after editing settings.json
 - Verify JSON syntax is valid (no trailing commas, proper quotes)
+
+**Context shows tokens instead of percentage (or vice versa):**
+- Run `npx ccstatusline@latest` to open the configuration TUI
+- Select the **Context Percentage** widget instead of **Context Length**
+- Save configuration and restart Claude Code
 
 ## Validation Checklist
 
