@@ -23,6 +23,83 @@ These come from operator memories — link, don't restate:
 - `[[email_geo_vendor_marketing]]` — Geospatial/survey vendor mail (Blue Marble, Geo Week, Aerotas, DJI, Trimble, ROCK, AirWorks, Mapbox, MARLS, etc.) is professionally valuable. Don't bulk mark-read; surface unsubscribe links instead and leave the cluster unread.
 - `[[utility_locate_archiving]]` — Only external ticketing-system senders (`mt@occinc.com`, `cl_irth_comm@irth.com`, Charter ROC, ELM Utility, Montana811) belong in a project's locate folder. Skip internal forwards/chats.
 
+## Stahly mail environment quirks
+
+Stahly runs **on-premises Exchange** at `https://mail.seaeng.com/owa/` — NOT Exchange Online / M365. This rules out several API paths that would otherwise be obvious:
+
+- **Microsoft Graph API does not apply.** Graph's mail/rules endpoints require Exchange Online mailboxes. Don't try `/me/mailFolders/inbox/messageRules` — even if you can auth, the mailbox isn't there.
+- **Even if you tried Graph anyway**, the Stahly tenant admin has user-self-consent disabled for unfamiliar apps. The "Microsoft Graph Command Line Tools" public client (`14d82eec-204b-4c2f-b7e8-296a70dab67e`) requires admin approval and the user can't grant it themselves. Same for Azure PowerShell, Azure CLI, and other common bypass apps.
+- **EWS is up** at `https://mail.seaeng.com/EWS/Exchange.asmx` with `WWW-Authenticate: Negotiate`, but the HTTP/mail.seaeng.com Kerberos SPN isn't reachable (SPNEGO/SSPI fails with `WinError -2146893053` "specified target is unknown or unreachable"). NTLM via `requests_ntlm` fails with empty creds (401). EWS is only viable if the user provides their AD password to the script, which generally isn't worth the friction.
+- **The local Outlook COM typelib has a broken cross-reference.** `gencache.EnsureDispatch("Outlook.Application")` fails on Python 3.14 with `TYPE_E_ELEMENTNOTFOUND` ("Element not found") at `itypeinfo.GetRefTypeInfo`. PowerShell PIA (`Microsoft.Office.Interop.Outlook`) fails identically on the typelib reference. Consequence: any code that needs to *set* `Rule.Actions.MoveToFolder.Folder` will silently fail — the assignment doesn't take, `Save()` then throws "One or more rules cannot be saved because of invalid actions or conditions." Confirmed in Python and PowerShell. **Don't burn time fighting this; route around it.**
+
+### What still works on Stahly mail
+
+| Need | How |
+|---|---|
+| Read inbox, move items, mark read/flag, save .msg | pywin32 COM (no Folder property setter on actions) ✅ |
+| Create/modify rule **conditions** (SenderAddress lists, etc.) | pywin32 COM ✅ |
+| Create rule **actions that take a Folder** (move-to-folder) | OWA browser automation via dev-browser → mail.seaeng.com ⚠️ |
+| Delete rules | pywin32 COM ✅ |
+| Execute rules on existing mail | `rule.Execute(False, folder, False, 0)` via pywin32 ✅ |
+| Outlook MCP tools | All still work for single-item / approval-gated work ✅ |
+
+### OWA browser automation pattern (for move-to-folder rules)
+
+When a rule needs `MoveToFolder.Folder`, drive OWA's Rules UI instead. The skill `[[dev-browser:dev-browser]]` ships a Playwright-backed CLI. Pattern:
+
+1. `await page.goto("https://mail.seaeng.com/owa/<user>@seaeng.com/?path=/options/inboxrules")` — note the on-prem path. M365 paths (`outlook.office.com/mail/options/mail/rules`) redirect with a "best performance" hint pointing at the on-prem URL — go straight to on-prem.
+2. User signs in **once** in the dev-browser-managed Chromium (named instance `--browser owa` persists session across script runs).
+3. Click `button[title="Add"]:not([disabled])` to open the rule dialog.
+4. Fill Name field: `page.mouse.click(400, 184)` then `keyboard.type(name)`. The Name input has empty `aria-label` and only matches `input[type="text"]` on the visible Name row — `.first()` may pick a hidden input; use coordinates.
+5. Set condition: open "Select one..." → hover `"It includes these words"` → click `"in the sender's address..."` → in the words sub-dialog, for each address: `fill(addr)` then `keyboard.press('Enter')` (commits to chips list) → click the **lowest-positioned OK button** (sub-dialog OK).
+6. Set action: open second "Select one..." → hover `"Move, copy, or delete"` → click `"Move the message to folder..."` → folder picker dialog opens → click each path segment (`"Inbox"`, then `"Geo Week News"`) → click lowest-positioned OK.
+7. Click main dialog OK → click `button[title="Save"]:not([disabled])`.
+
+Reset state after a failure with `await page.goto(rules_url)` — Escape doesn't always clean modal stacks.
+
+Required pre-step: any folder used as a move target must already exist. Create via pywin32 first:
+```python
+inbox = ns.GetDefaultFolder(6)
+new = inbox.Folders.Add("Geo Week News")  # raises if exists; iterate first to check
+```
+
+## Server-side inbox rules (currently live)
+
+These 6 server-side rules are deployed on the user's Exchange mailbox and run automatically on incoming mail. They were created via OWA browser automation (move-to-folder actions); the IT rule's senders were later trimmed via pywin32. **Don't recreate them; understand them.**
+
+| # | Rule | Sender match | Action |
+|--:|---|---|---|
+| 1 | Auto-file Geo Week News | `info@geo-week.com`, `editor@geoweeknews.com` | move → `Inbox/Geo Week News` |
+| 2 | Junk Panera receipts | `panera@m2.panerabread.com` | move → `Junk Email` |
+| 3 | Junk cold marketing | 7 senders (Liqoxo PMP, CPI Bathrooms, Canva product, Warp feedback, Survival Med, Passport to Paradise, Autodesk marketing) | move → `Junk Email` |
+| 4 | Auto-file IT system noise | `vaultmanager@seaeng.com`, `helpdesk@getsystems.net`, `noreply@barracuda.com` | move → `Inbox/IT` |
+| 5 | Auto-file BuildingConnected | `@buildingconnected.com` | move → `Inbox/BuildingConnected` |
+| 6 | Auto-file 811 Locates | `@occinc.com`, `@irth.com`, `@elmutility.com`, `@montana811.org`, `roc-northwest@charter.com`, `ed.mcfadden@charter.com` | move → `Inbox/811 Locates` |
+
+### What the IT rule deliberately does NOT include
+
+SpamTitan daily quarantine digests (`spamtitan@avataracloud.com`), Avatara case responses from `ccarpenter@avataracloud.com` and `jguntli@avataracloud.com` — these stay in the main inbox because the user needs to see them (quarantine releases, real support cases). Don't add them back to the IT rule without asking.
+
+### What's NOT a Stahly noise sender even though it looks like one
+
+- `4066014069@blackfootlife.com` — looks like a foreign-domain phishing vector but is actually a real Stahly phone-system voicemail forward. Leave alone.
+- `support@survivalmedonline.org` — borderline fearmail; user opted to junk-rule it (rule 3) rather than treat as phishing.
+- `quarantine@ess.barracudanetworks.com` — Barracuda quarantine notifications (different sender from `noreply@barracuda.com` which is product marketing). NOT in any rule; user wants to see these.
+
+### Inbox subfolder map (after rules)
+
+```
+Inbox/
+  811 Locates/         ← rule 6, live ticket workflow (also .msg archive source)
+  BuildingConnected/   ← rule 5, GC bid invites
+  IT/                  ← rule 4, Vault/GetSystems/Barracuda-marketing noise
+  Geo Week News/       ← rule 1, curated industry reading
+  UAVs/                ← pre-existing, user-managed
+  (other pre-existing project folders — Equipment, Subdivisions, etc.)
+```
+
+When archiving locates (`Workflow: utility locate .msg archive`), source mail from **Inbox/811 Locates** rather than the main Inbox — that's where rule 6 deposits them now.
+
 ## Stahly project folder convention
 
 Live data lives under the `\\stahly\PROJECTS\` share:
@@ -172,7 +249,9 @@ Prompt template anatomy:
 
 ## Performance numbers (reference)
 
-From a real session (947 unread → 169 unread):
+From real sessions:
+
+**First triage pass (947 unread → 169 unread):**
 - 932 emails fetched via paginated MCP calls: ~30s
 - Cluster subagent over 10 page files: ~90s
 - Bulk mark-read 677 emails via Python COM: **14.5s** (vs ~10 minutes if done via MCP)
@@ -180,7 +259,48 @@ From a real session (947 unread → 169 unread):
 - Flag 14 ACTION_NEEDED items via Python COM: <1s
 - Save 7 .msg files via Python COM: ~3s
 
-The Python COM bypass is the workhorse. The MCP shines for single-item, interactive, approval-gated work.
+**Rules sweep (200 unread → 124 unread in main + 615 items relocated to subfolders):**
+- 6 server-side rules executed against existing inbox via `rule.Execute(False, inbox, False, 0)`: ~5s total
+- Geo Week News rule moved 125 items; IT moved 239; 811 Locates moved 161; BuildingConnected moved 51; Junk cold marketing moved 35; Junk Panera moved 4
+
+The Python COM bypass is the workhorse. The MCP shines for single-item, interactive, approval-gated work. Server-side rules carry future mail with zero ongoing cost.
+
+## Rule management cheatsheet
+
+```python
+# List, modify, run, delete rules via pywin32
+import pythoncom, win32com.client
+from win32com.client import VARIANT
+outlook = win32com.client.Dispatch("Outlook.Application")
+ns = outlook.GetNamespace("MAPI")
+rules = ns.DefaultStore.GetRules()
+
+# Modify SenderAddress condition (works fine)
+for i in range(1, rules.Count + 1):
+    r = rules.Item(i)
+    if r.Name == "Auto-file 811 Locates":
+        v = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_BSTR, ("@occinc.com", "@irth.com"))
+        r.Conditions.SenderAddress.Address = v
+        r.Conditions.SenderAddress.Enabled = True
+rules.Save(False)
+
+# Run rules on existing inbox (Execute on each rule)
+inbox = ns.GetDefaultFolder(6)
+for name in ["Auto-file Geo Week News", "Junk Panera receipts", ...]:
+    for i in range(1, rules.Count + 1):
+        r = rules.Item(i)
+        if r.Name == name:
+            r.Execute(False, inbox, False, 0)  # ShowProgress, Folder, IncludeSub, Option(0=all/1=read/2=unread)
+            break
+
+# Delete by name
+for i in range(rules.Count, 0, -1):  # descending so indices don't shift
+    if rules.Item(i).Name == "OldRuleName":
+        rules.Remove(i)
+rules.Save(False)
+```
+
+**Creating a new move-to-folder rule via pywin32 will FAIL** (the `Save()` throws "invalid actions or conditions" because the Folder assignment didn't take). Use the OWA browser pattern above. Delete and condition modifications work fine.
 
 ## Cross-skill bridges
 
