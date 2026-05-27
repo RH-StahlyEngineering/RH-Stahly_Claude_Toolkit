@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-"""Search Claude Code conversation history stored as JSONL session files."""
+"""Search Claude Code conversation history stored as JSONL session files,
+and optionally session-handoff emails archived in an Outlook subfolder."""
 
 from __future__ import annotations
 
@@ -9,6 +10,10 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Optional Outlook handoff support. Loaded lazily — if pywin32 isn't installed
+# or Outlook isn't running, handoff search is silently disabled.
+HANDOFF_FOLDER_NAME = "Claude Code Sessions"  # subfolder of Inbox
 
 # Noise filters
 SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
@@ -44,6 +49,26 @@ class SessionInfo:
     title: str = ""
     user_messages: list[str] = field(default_factory=list)
     all_messages: list[str] = field(default_factory=list)
+
+
+@dataclass
+class HandoffEmail:
+    """A session-handoff email archived in Outlook (Inbox/Claude Code Sessions)."""
+    entry_id: str
+    session_id: str       # full UUID parsed from body (may be empty if unparsable)
+    short_id: str         # 8-char prefix from subject "(session XXXXXXXX)"
+    topic: str            # parsed from subject after "Claude Code session: "
+    subject: str
+    received: str         # ISO yyyy-mm-dd
+    hostname: str = ""
+    body_text: str = ""
+
+
+SESSION_ID_RE = re.compile(r"\(session\s+([a-f0-9]{8})\)\s*$", re.IGNORECASE)
+SESSION_ID_FULL_RE = re.compile(
+    r"Session ID:\s*([a-f0-9-]{36})", re.IGNORECASE
+)
+HOST_RE = re.compile(r"Host:\s*([A-Z0-9_-]+)", re.IGNORECASE)
 
 
 def clean_text(text: str) -> str:
@@ -184,6 +209,131 @@ def search_sessions(
     return results
 
 
+def load_handoffs(folder_name: str = HANDOFF_FOLDER_NAME) -> list[HandoffEmail]:
+    """Read all handoff emails from the Outlook subfolder via COM.
+
+    Returns an empty list (with a stderr note) if Outlook/pywin32 are unavailable
+    or the folder doesn't exist — so callers can skip gracefully.
+    """
+    try:
+        import win32com.client  # noqa: WPS433 — optional dep
+    except ImportError:
+        print(
+            "Note: pywin32 not installed — skipping Outlook handoff search.",
+            file=sys.stderr,
+        )
+        return []
+
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        ns = outlook.GetNamespace("MAPI")
+        inbox = ns.GetDefaultFolder(6)  # olFolderInbox
+    except Exception as ex:  # noqa: BLE001 — COM throws generic errors
+        print(f"Note: Outlook COM unreachable ({ex}); skipping handoff search.", file=sys.stderr)
+        return []
+
+    target = None
+    for f in inbox.Folders:
+        if f.Name == folder_name:
+            target = f
+            break
+    if target is None:
+        return []
+
+    out: list[HandoffEmail] = []
+    items = target.Items
+    items.Sort("[ReceivedTime]", True)  # newest first
+
+    for item in items:
+        try:
+            if item.Class != 43:  # 43 = MailItem
+                continue
+            subject = item.Subject or ""
+            body = item.Body or ""
+
+            short_id = ""
+            m = SESSION_ID_RE.search(subject)
+            if m:
+                short_id = m.group(1)
+
+            full_id = ""
+            m2 = SESSION_ID_FULL_RE.search(body)
+            if m2:
+                full_id = m2.group(1)
+
+            topic = ""
+            if subject.lower().startswith("claude code session:"):
+                topic = subject[len("claude code session:"):].strip()
+                # Strip "(session XXXXXXXX)" suffix
+                topic = SESSION_ID_RE.sub("", topic).strip().rstrip("(").strip()
+
+            hostname = ""
+            mh = HOST_RE.search(body)
+            if mh:
+                hostname = mh.group(1)
+
+            received = ""
+            try:
+                received = item.ReceivedTime.strftime("%Y-%m-%dT%H:%M:%S")
+            except Exception:  # noqa: BLE001
+                pass
+
+            out.append(HandoffEmail(
+                entry_id=item.EntryID,
+                session_id=full_id,
+                short_id=short_id,
+                topic=topic,
+                subject=subject,
+                received=received,
+                hostname=hostname,
+                body_text=body,
+            ))
+        except Exception:  # noqa: BLE001 — skip malformed item, continue
+            continue
+
+    return out
+
+
+def search_handoffs(
+    handoffs: list[HandoffEmail],
+    keywords: list[str],
+    use_or: bool = False,
+) -> list[tuple[HandoffEmail, float, list[str]]]:
+    """Search handoff emails for keywords. Same scoring shape as search_sessions."""
+    results: list[tuple[HandoffEmail, float, list[str]]] = []
+
+    for h in handoffs:
+        combined = (h.subject + "\n" + h.topic + "\n" + h.body_text).lower()
+        keyword_hits = sum(1 for kw in keywords if kw.lower() in combined)
+
+        if use_or and keyword_hits == 0:
+            continue
+        if not use_or and keyword_hits < len(keywords):
+            continue
+
+        score = keyword_hits / len(keywords)
+        total_hits = sum(combined.count(kw.lower()) for kw in keywords)
+        score += min(total_hits / 20.0, 1.0)
+
+        # Build excerpts from body paragraphs that contain any keyword
+        excerpts: list[str] = []
+        paras = [p.strip() for p in re.split(r"\n\s*\n", h.body_text) if p.strip()]
+        for p in paras:
+            p_lower = p.lower()
+            if any(kw.lower() in p_lower for kw in keywords):
+                excerpt = p[:400]
+                if len(p) > 400:
+                    excerpt += "..."
+                excerpts.append(excerpt)
+                if len(excerpts) >= 3:
+                    break
+
+        results.append((h, score, excerpts))
+
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
+
+
 def find_projects_dir() -> Path:
     """Find the ~/.claude/projects/ directory."""
     home = Path.home()
@@ -248,6 +398,16 @@ Examples:
     parser.add_argument(
         "--verbose", "-v", action="store_true", help="Show matching message excerpts"
     )
+    parser.add_argument(
+        "--no-handoffs",
+        action="store_true",
+        help="Skip the Outlook handoff-email search (default: search both JSONL + handoffs)",
+    )
+    parser.add_argument(
+        "--handoffs-only",
+        action="store_true",
+        help="Search ONLY the Outlook handoff-email folder; skip JSONL transcripts",
+    )
 
     args = parser.parse_args()
 
@@ -269,31 +429,64 @@ Examples:
         print(f"Project filter: {project_filter}")
     print()
 
-    sessions = collect_sessions(projects_dir, project_filter)
-    print(f"Scanned {len(sessions)} sessions")
+    # Gather JSONL session results (unless --handoffs-only)
+    jsonl_results: list[tuple[SessionInfo, float, list[str]]] = []
+    if not args.handoffs_only:
+        sessions = collect_sessions(projects_dir, project_filter)
+        all_roles = not args.user_only
+        jsonl_results = search_sessions(sessions, args.keywords, args.use_or, all_roles)
+        print(f"Scanned {len(sessions)} JSONL sessions")
 
-    all_roles = not args.user_only
-    results = search_sessions(sessions, args.keywords, args.use_or, all_roles)
-    results = results[: args.limit]
+    # Gather handoff email results (unless --no-handoffs)
+    handoff_results: list[tuple[HandoffEmail, float, list[str]]] = []
+    if not args.no_handoffs:
+        handoffs = load_handoffs()
+        if handoffs:
+            handoff_results = search_handoffs(handoffs, args.keywords, args.use_or)
+            print(f"Scanned {len(handoffs)} handoff emails")
 
-    if not results:
+    # Merge tagged results
+    merged: list[tuple[str, float, object, list[str]]] = []  # (source, score, info, excerpts)
+    for s, score, exc in jsonl_results:
+        merged.append(("jsonl", score, s, exc))
+    for h, score, exc in handoff_results:
+        # Bias: when scores are close, prefer JSONL (live truth over snapshot)
+        merged.append(("handoff", score - 0.001, h, exc))
+    merged.sort(key=lambda x: x[1], reverse=True)
+    merged = merged[: args.limit]
+
+    if not merged:
         print("\nNo matching sessions found.")
         return
 
-    print(f"Found {len(results)} matching sessions:\n")
+    print(f"\nFound {len(merged)} matching results:\n")
 
-    for i, (session, score, excerpts) in enumerate(results, 1):
-        date = session.timestamp[:10] if session.timestamp else "unknown"
-        branch = f" [{session.branch}]" if session.branch else ""
-        title = session.title[:100] if session.title else "(no title)"
-
-        safe_title = title.encode("ascii", "replace").decode()
-        print(f"  {i}. [{date}]{branch} score={score:.2f}")
-        print(f"     ID: {session.session_id}")
-        print(f"     Project: {session.project}")
-        print(f"     Title: {safe_title}")
-        if session.slug:
-            print(f"     Slug: {session.slug}")
+    for i, (source, score, info, excerpts) in enumerate(merged, 1):
+        if source == "jsonl":
+            session = info  # type: ignore[assignment]
+            date = session.timestamp[:10] if session.timestamp else "unknown"
+            branch = f" [{session.branch}]" if session.branch else ""
+            title = session.title[:100] if session.title else "(no title)"
+            safe_title = title.encode("ascii", "replace").decode()
+            print(f"  {i}. [{date}][jsonl]{branch} score={score:.2f}")
+            print(f"     ID: {session.session_id}")
+            print(f"     Project: {session.project}")
+            print(f"     Title: {safe_title}")
+            if session.slug:
+                print(f"     Slug: {session.slug}")
+        else:
+            h = info  # type: ignore[assignment]
+            date = h.received[:10] if h.received else "unknown"
+            print(f"  {i}. [{date}][handoff] score={score:.2f}")
+            if h.session_id:
+                print(f"     ID: {h.session_id}")
+            elif h.short_id:
+                print(f"     ID (short): {h.short_id}")
+            if h.hostname:
+                print(f"     Host: {h.hostname}")
+            topic = (h.topic or h.subject)[:100]
+            safe_topic = topic.encode("ascii", "replace").decode()
+            print(f"     Topic: {safe_topic}")
 
         if args.verbose and excerpts:
             print("     Excerpts:")
