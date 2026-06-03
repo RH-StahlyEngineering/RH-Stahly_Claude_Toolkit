@@ -1,0 +1,59 @@
+{
+  "_meta": {
+    "description": "Stahly Engineering & Associates office directory. Four active offices; signatories per office. Cody, WY closed 2026 — removed from this list. Update via PR if Marketing changes phone/address/personnel.",
+    "last_verified": "2026-06-03",
+    "signing_limit_notes": "signing_limit is the maximum total project fee the signatory may approve unilaterally. Use null for unlimited (CFO/CEO level). build.py warns at build time when the rendered fee total exceeds the chosen signatory's limit. Adjust if Stahly's authority matrix changes."
+  },
+  "offices": {
+    "Bozeman": {
+      "street": "851 Bridger Dr, Ste 1",
+      "city_state_zip": "Bozeman, MT 59715",
+      "phone": "(406) 522-8594",
+      "address_band_order": 1,
+      "signatories": []
+    },
+    "Billings": {
+      "street": "2817 2nd Ave N, #300",
+      "city_state_zip": "Billings, MT 59101",
+      "phone": "(406) 442-8594",
+      "address_band_order": 2,
+      "signatories": []
+    },
+    "Helena": {
+      "street": "3530 Centennial Dr",
+      "city_state_zip": "Helena, MT 59601",
+      "phone": "(406) 442-8594",
+      "address_band_order": 3,
+      "signatories": []
+    },
+    "Great Falls": {
+      "street": "219 2nd Ave S, Ste 302",
+      "city_state_zip": "Great Falls, MT 59405",
+      "phone": "(406) 604-4644",
+      "address_band_order": 4,
+      "signatories": [
+        {
+          "name": "Aaron Kensinger, P.E.",
+          "title": "Great Falls Regional Manager / Senior Engineer",
+          "email": "akensinger@seaeng.com",
+          "signature_image": "assets/AK_signature_transparent.png",
+          "signing_limit": 80000
+        },
+        {
+          "name": "Ryan Harbach, P.L.S.",
+          "title": "Project Surveyor",
+          "email": "rharbach@seaeng.com",
+          "signature_image": "assets/RH_signature_transparent.png",
+          "signing_limit": 25000
+        },
+        {
+          "name": "Amy Strainer",
+          "title": "Chief Financial Officer",
+          "email": "astrainer@seaeng.com",
+          "_note": "Stahly's CFO. Default signing authority for contracts above office-manager threshold.",
+          "signing_limit": null
+        }
+      ]
+    }
+  }
+}

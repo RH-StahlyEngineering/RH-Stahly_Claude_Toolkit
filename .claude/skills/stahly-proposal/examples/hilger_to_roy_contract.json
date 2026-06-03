@@ -1,0 +1,25 @@
+{
+  "_note": "Hilger-to-Roy contract fixture. Mirrors the production proposal JSON pattern but for the Professional Services Agreement template. Use with scripts/fill_contract.py --content this --proposal <signed_proposal.pdf>.",
+
+  "agreement_date": "2026-06-02",
+  "project_slug": "Hilger_to_Roy",
+
+  "project_description": "Roy Substation to Hilger Substation LiDAR corridor survey.",
+  "services_text":       "As described in the attached Stahly Engineering Professional Services Proposal dated June 2, 2026, which is incorporated by reference.",
+  "compensation_text":   "As described in the attached Stahly Engineering Professional Services Proposal dated June 2, 2026, which is incorporated by reference.",
+
+  "client": {
+    "legal_name":   "Fergus Electric Cooperative, Inc.",
+    "address":      "84423 US Highway 87, Lewistown, MT 59457",
+    "signer_name":  "Melanie Foran, P.E.",
+    "signer_title": "Engineer"
+  },
+
+  "consultant": {
+    "office":           "Great Falls",
+    "signatory_name":   "Aaron Kensinger, P.E.",
+    "signatory_title":  "Great Falls Office Manager",
+    "pm_contact":       "Ryan Harbach, P.L.S.",
+    "pm_email":         "rharbach@seaeng.com"
+  }
+}

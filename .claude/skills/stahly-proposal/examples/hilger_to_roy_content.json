@@ -1,0 +1,144 @@
+{
+  "_note": "Smoke-test fixture — rebuilds the iter13 Hilger-to-Roy proposal through the skill's parameterized engine. Source content from 20260508_Hilger_to_Roy_Lidar_Proposal_v3.docx (Ryan, May 2026).",
+
+  "project_name": "Hilger Substation to\nRoy Substation",
+  "project_subtitle": "LiDAR Survey – Approximately 28.1 Miles",
+  "client_name": "Fergus Electric Cooperative",
+  "date": "2026-06-02",
+  "office": "Great Falls",
+  "signatory_name": "Aaron Kensinger, P.E.",
+  "signatory_title": "Great Falls Office Manager",
+  "re_line": "Hilger Substation to Roy Substation LiDAR Survey – Approximately 28.1 Miles",
+
+  "addressee": {
+    "name": "Melanie Foran",
+    "org": "Fergus Electric Cooperative",
+    "street": "84423 US Highway 87",
+    "city_state_zip": "Lewistown, MT 59457"
+  },
+
+  "cover_photo": {
+    "path": "\\\\Stahly\\marketing\\Scope-Schedule-Budget\\Survey - GIS\\2025\\Great Falls\\036-Fergus_Electric_Lidar\\_claude_work\\proposal_branding_work\\v3_ingest\\v3_images\\image1.jpg",
+    "annotations_ok": true
+  },
+
+  "sections": [
+    {
+      "type": "intro",
+      "title": "Introduction",
+      "body": "We appreciate the opportunity to provide a proposal for professional services. We understand a LiDAR survey is required along the Hilger Substation to Roy Substation corridor, approximately 28.1 miles in length, to support HDR Engineering&rsquo;s design of a new transmission line in PLS-CADD. Stahly Engineering has nearly a decade of experience with UAV remote sensing, possessing strong familiarity with LiDAR best practices, ASPRS accuracy standards, and traditional surveying methods."
+    },
+    {
+      "type": "subsection_group",
+      "title": "Scope of Work",
+      "lead": "The scope of work will include:",
+      "subs": [
+        {
+          "title": "Survey Corridor",
+          "body": "The corridor extends from highway right-of-way fence to right-of-way fence, plus 75 feet beyond each right-of-way fence on both sides of the highway. Coverage includes both the Hilger and Roy Substations and a minimum of two spans on each tap line off the main alignment. The seven extra survey areas and two HDR-defined survey areas identified in the project KML (received 5/6/2026) are in addition to that base corridor. Total survey footprint is approximately 1,060 acres."
+        },
+        {
+          "title": "Acquisition",
+          "body": [
+            "A combination of UAV LiDAR (Phoenix MiniRanger-3 Lite with Riegl miniVUX-3UAV) and high-resolution aerial imagery will be flown across the full corridor at approximately 250 ft AGL and 15 mph. Native point density is approximately 150&ndash;400 points per square meter, well in excess of HDR&rsquo;s 20 points/m&sup2; minimum and Stahly&rsquo;s empirically validated threshold of 90 points/m&sup2; for reliable distribution wire extraction in Trimble Business Center.",
+            "Two LiDAR products will be derived: a fully classified point cloud at native density, and a thinned ground product at approximately 1 point per square meter for clean ground surface and contour generation. The coordinate system will be Montana State Plane Grid, International Feet, vertical datum NAVD 88 (Geoid 18), tied to existing control provided by Arrow Creek Surveying.",
+            "Classification will use a hybrid approach: ground classification performed in Phoenix Spatial Explorer Pro during point cloud generation, followed by verification and refinement of HDR-specific feature codes in Trimble Business Center."
+          ]
+        },
+        {
+          "title": "Classification",
+          "body": "The point cloud will be classified to conform with the LAS class-code table provided by HDR. Classified features include ground, water, roads, bridges, the power-line network along the same-side stretch (conductors, shield and guard wires, poles, guy wires, and conductor attachments), foreign line crossings, substations, buildings, farm structures, and gates, with vegetation classified as the leftover bucket. The exact class-code integers assigned to each feature will match the legend provided by HDR. A classification application notes document will accompany the deliverable, recording how each class was applied on this project."
+        },
+        {
+          "title": "Ground Truthing",
+          "body": "Ground checkpoints will be collected and reported in accordance with the ASPRS Positional Accuracy Standards for Digital Geospatial Data, Edition 2, Version 2 (2024). Non-Vegetated Vertical Accuracy (NVA) and Vegetated Vertical Accuracy (VVA) will each be assessed using a minimum of thirty (30) checkpoints, distributed across the applicable land cover types within the project area. Vertical accuracy will meet QL0 standards per the USGS LIDAR Base Specifications V1.3."
+        },
+        {
+          "title": "Orthophoto",
+          "body": "A georeferenced aerial orthophoto will be produced over the same extent as the LiDAR corridor; see Deliverables for format details."
+        }
+      ]
+    },
+    {
+      "type": "bullet_list",
+      "title": "Scope Clarifications",
+      "h_level": "H2",
+      "bullets": [
+        "Underground utility locates via 811 requests are not included in this proposal.",
+        "Existing-line classification is limited to portions of the corridor where the existing line and the new line lie on the same side of the highway &mdash; specifically the approximately 8 miles of the 28.1-mile corridor where the lines are on the same side. On the remaining ~20 miles where the lines are on opposite sides, points belonging to the existing line will remain unclassified in the LAS deliverable, as the existing line is not a design constraint there.",
+        "Culverts are not included in this proposal.",
+        "All points inside the Hilger and Roy substation fence lines will be classified as Substation (Code 750), regardless of feature type.",
+        "Fences (Code 810) will be delivered as 3D polylines traced from the orthophoto rather than per-point classifications."
+      ]
+    },
+    {
+      "type": "deliverables_list",
+      "title": "Deliverables",
+      "lead": "The following deliverables will be provided to Fergus Electric Cooperative as part of this survey:",
+      "items": [
+        {
+          "title": "Classified Point Cloud",
+          "body": "Classified LAS v1.4 point cloud covering the full survey corridor, classified per HDR&rsquo;s feature codes. Two products: fully classified at native density, and a thinned ground product (~1 point per square meter) suitable for clean ground surface and 1-foot contour generation."
+        },
+        {
+          "title": "Classification Application Notes",
+          "body": "Project-specific documentation defining how each HDR feature code was applied in this delivery, including any edge-case classification decisions (cattle guards classified as Code 230 Road, conductor attachments placed only on the same-side stretch, vegetation as the leftover class, etc.)."
+        },
+        {
+          "title": "Orthophoto",
+          "body": "A georeferenced aerial orthophoto in ECW format covering the same extent as the LiDAR corridor."
+        },
+        {
+          "title": "Ground Checkpoint Report",
+          "body": "Ground checkpoint coordinates, descriptions, and accuracy report per ASPRS Positional Accuracy Standards for Digital Geospatial Data, Edition 2, Version 2 (2024), with vertical accuracy assessed against USGS QL0 standards."
+        }
+      ]
+    },
+    {
+      "type": "assumptions_group",
+      "title": "Assumptions",
+      "groups": [
+        {
+          "title": "Site Survey",
+          "bullets": [
+            "The site will be accessible without snow or ice at the time of the field work.",
+            "Existing horizontal and vertical control will be provided by Arrow Creek Surveying prior to the start of fieldwork. Stahly will place its own aerial photo control targets at Arrow Creek&rsquo;s existing control points and will set additional secondary control where needed for full corridor coverage."
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "title": "Schedule",
+      "body": "Subject to notice to proceed by Friday, June 12, 2026, and receipt of survey control from Arrow Creek Surveying prior to the start of fieldwork, fieldwork is anticipated to begin Monday, June 22, 2026 and complete within four weeks. Survey deliverables are targeted for Monday, August 10, 2026, with best-effort delivery on Monday, August 3, 2026, weather permitting."
+    },
+    {
+      "type": "fee_table",
+      "title": "Fees for Professional Services",
+      "lead": "The fee for the described work is broken out by project phase. Phases 1 through 4 and Phase 6 are billed on a lump sum basis. Classification (Phase 5) is billed time-and-materials against actual hours, not to exceed the amount shown.",
+      "phases": [
+        {"name": "1.  PM / Admin / QA-QC",                          "basis": "Lump Sum", "labor":  4980, "expenses":     0},
+        {"name": "2.  Pre-field Prep",                              "basis": "Lump Sum", "labor":  4342, "expenses":     0},
+        {"name": "3.  Field Work (acquisition + checkpoints)",      "basis": "Lump Sum", "labor": 17959, "expenses": 10674},
+        {"name": "4.  Processing (trajectory, georef, ortho)",      "basis": "Lump Sum", "labor":  9185, "expenses":     0},
+        {"name": "5.  Classification",                              "basis": "T&amp;M NTE", "labor": 24000, "expenses":     0},
+        {"name": "6.  Deliverables &amp; client review",            "basis": "Lump Sum", "labor":  7734, "expenses":     0}
+      ],
+      "corridor_miles": 28.1
+    },
+    {
+      "type": "paragraph_group",
+      "title": "Changes in the Identified Scope of Services",
+      "paragraphs": [
+        "We have attempted to identify all work items that we believe will be required. However, certain elements of the project may not be fully defined or may arise during coordination with the client or during agency review. Notification will be provided for any additional requested scope of work items that will be billed on a time-and-material basis and tracked separately in our monthly invoicing.",
+        "If requested, a new lump sum fee will be negotiated at the time for any additional scope of work, and no work will be completed without prior authorization. Please be aware of any project schedule delays that may be caused by negotiating a professional services amendment.",
+        "Within the Classification phase (billed time-and-materials, not to exceed $24,000), Fergus Electric or HDR Engineering may direct Stahly to remove or reduce specific feature-code items from the deliverable at any time during execution, without a contract amendment. Time already spent on a removed item prior to the removal direction will be billed at standard rates; only un-completed work on that item is dropped going forward. The not-to-exceed cap is unaffected by removals. Additions to the classification scope, or any increase to the not-to-exceed cap, require a written amendment to this agreement.",
+        "Across the approximately 20 miles of the corridor where the existing transmission line and the new line are on opposite sides of the highway, the existing line will remain unclassified in the base scope. If Fergus Electric or HDR would like classification of the existing line across that stretch, Stahly can provide a separate fee proposal for that work."
+      ]
+    },
+    {
+      "type": "signature_block",
+      "thanks": "Thank you for this opportunity. We look forward to providing quality professional services delivered on schedule. Please do not hesitate to contact us if you have any questions or concerns."
+    }
+  ]
+}
