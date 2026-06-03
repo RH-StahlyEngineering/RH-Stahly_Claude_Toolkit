@@ -40,7 +40,7 @@ Bidirectional sync between local `.claude` folder and the RH-Stahly_Claude_Toolk
 REMOTE_REPO="RH-StahlyEngineering/RH-Stahly_Claude_Toolkit"
 REMOTE_BRANCH="master"
 REMOTE_BASE=".claude"
-GLOBAL_LOCAL_BASE="C:/Users/rharbach/.claude"
+GLOBAL_LOCAL_BASE="$HOME/.claude"  # Git Bash on Windows expands $HOME to %USERPROFILE%
 PROJECT_LOCAL_BASE=".claude"  # Relative to current working directory
 SYNCABLE_FOLDERS="agents commands skills plugins"
 ```
@@ -95,7 +95,7 @@ Download file or folder from remote repository to local `.claude`.
 2.5. **Ask destination** (global vs project):
    Use AskUserQuestion: "Where should this asset be installed?"
    Options:
-   - Global (`C:/Users/rharbach/.claude/`) - available in all projects
+   - Global (`~/.claude/`) - available in all projects
    - Project (`./.claude/`) - only available in current project
 
    Set `LOCAL_BASE` accordingly for remaining steps.
@@ -145,10 +145,10 @@ Upload file or folder from local `.claude` to remote repository.
 
 2. **Determine source** (global vs project):
    - Check if path exists in project `.claude/$1`
-   - Check if path exists in global `C:/Users/rharbach/.claude/$1`
+   - Check if path exists in global `$HOME/.claude/$1`
    - If exists in both, use AskUserQuestion: "Found in both locations. Push from?"
      Options:
-     - Global (`C:/Users/rharbach/.claude/`)
+     - Global (`~/.claude/`)
      - Project (`./.claude/`)
    - If exists in only one, use that location
    - If exists in neither, report: "Local path not found: $1"
