@@ -4,13 +4,21 @@
 const raw = await readFile("pof.json");
 const { pof } = JSON.parse(raw);
 
+// Hardcoded defaults — applied only when pof.json doesn't already supply a value.
+// Office location is intentionally NOT defaulted here; derive it at gather time
+// from the project's path (Survey - GIS/<YYYY>/<City>/<NNN>/) so the right city
+// lands instead of a static Helena fallback.
+if (!pof.form_preparer)       pof.form_preparer       = "Ryan Harbach";
+if (!pof.pm_email)            pof.pm_email            = "rharbach@seaeng.com";
+if (!pof.department)          pof.department          = "Survey";
+
 const tabs = await browser.listPages();
 const jot = tabs.find(t => (t.url||'').includes('form.jotform.com/232545214343146'));
 if (!jot) throw new Error("JotForm tab not found");
 const page = await browser.getPage(jot.id);
 
 // Field map: [key in pof.json, jotform input id, kind]
-// kinds: text | textarea | select | radio | checkbox | tel | date3
+// kinds: text | textarea | select | radio | checkbox | tel | date3 | date_masked
 const FIELDS = [
   ["date_month",                    "month_373",    "text"],
   ["date_day",                      "day_373",      "text"],
@@ -61,7 +69,10 @@ const ROW_IDS = [
   ["input_399","input_400","input_401","input_402","input_403","input_404","input_405","input_406","input_407","input_408"],
   ["input_409","input_410","input_411","input_412","input_413","input_414","input_415","input_416","input_417","input_418"],
 ];
-const ROW_KINDS = ["text","text","text","text","text","text","text","select","text","select"];
+// Row column kinds. Start/End dates use date_masked (MM/DD/YYYY mask handled
+// via per-character keyboard events) because the form's plain text-set on these
+// gets re-tokenized by the mask into "63/20/26__" instead of "06/03/2026".
+const ROW_KINDS = ["text","text","date_masked","date_masked","text","text","text","select","text","select"];
 
 // Expand row fields onto the same shape FIELDS uses
 const rows = pof.rows || [];
@@ -97,6 +108,34 @@ for (const [key, id, kind] of FIELDS) {
         el.focus();
         el.value = String(val);
         fireTextEvents(el);
+        return { ok: true, persisted: el.value };
+      }
+      if (kind === "date_masked") {
+        // JotForm date column with MM/DD/YYYY mask.
+        // Send zero-padded MMDDYYYY (8 digits, no slashes) per character so the
+        // mask handler can insert the separators. Setting el.value directly to
+        // "6/3/2026" gets mangled to "63/20/26__" — don't.
+        const el = document.getElementById(id);
+        if (!el) return { ok: false, error: "not found" };
+        const s = String(val);
+        const parts = s.split('/');
+        const mmddyyyy = parts.length === 3
+          ? parts[0].padStart(2,'0') + parts[1].padStart(2,'0') + parts[2]
+          : s.replace(/\D/g,'');
+        if (mmddyyyy.length !== 8) return { ok: false, error: "bad date format: " + s };
+        el.scrollIntoView({ block: "center" });
+        el.focus();
+        el.value = '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        for (const ch of mmddyyyy) {
+          el.value = el.value + ch;
+          el.dispatchEvent(new KeyboardEvent('keydown',  { key: ch, bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent('keypress', { key: ch, bubbles: true }));
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new KeyboardEvent('keyup',    { key: ch, bubbles: true }));
+        }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.blur();
         return { ok: true, persisted: el.value };
       }
       if (kind === "select") {

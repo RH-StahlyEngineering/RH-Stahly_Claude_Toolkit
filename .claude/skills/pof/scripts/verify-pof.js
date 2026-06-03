@@ -1,4 +1,6 @@
-// verify-pof.js — re-read every field from the live form and compare to pof.json
+// verify-pof.js — re-read every field from the live form and compare to pof.json.
+// Tolerates form-side reformatting: phone auto-format, date zero-padding, $-prefix on money.
+
 const raw = await readFile("pof.json");
 const { pof } = JSON.parse(raw);
 
@@ -12,7 +14,7 @@ const FIELDS = [
   ["project_number_4digit","input_314","text"],["project_number_5digit","input_315","text"],
   ["project_name","input_4","text"],["project_description","input_5","textarea"],
   ["project_manager","input_6","text"],["eor_sor","input_8","text"],
-  ["form_preparer","input_441","text"],["estimate","input_319","text"],
+  ["form_preparer","input_441","text"],["estimate","input_319","money"],
   ["given_to_client","input_10","select"],["pm_email","input_456","text"],
   ["rate_table","input_11","select"],["billing_terms","input_13","select"],
   ["time_to_be_moved_to_project","input_14","select"],
@@ -38,7 +40,7 @@ const ROW_IDS = [
   ["input_399","input_400","input_401","input_402","input_403","input_404","input_405","input_406","input_407","input_408"],
   ["input_409","input_410","input_411","input_412","input_413","input_414","input_415","input_416","input_417","input_418"],
 ];
-const ROW_KINDS = ["text","text","text","text","text","text","text","select","text","select"];
+const ROW_KINDS = ["text","text","date","date","money","money","money","select","text","select"];
 
 const rows = pof.rows || [];
 rows.forEach((row, i) => {
@@ -50,6 +52,20 @@ rows.forEach((row, i) => {
     }
   });
 });
+
+// Normalizers — strip format the form may auto-apply so comparisons aren't false positives.
+function normalize(value, kind) {
+  if (value === null || value === undefined) return value;
+  const s = String(value);
+  if (kind === "tel") return s.replace(/\D/g, "");                         // (406) 538-3465  ->  4065383465
+  if (kind === "money") return s.replace(/[$,\s]/g, "");                   // $78,900 -> 78900
+  if (kind === "date") {
+    // accept M/D/YYYY and MM/DD/YYYY as equivalent
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}/${m[3]}` : s;
+  }
+  return s;
+}
 
 const ok = [];
 const mismatches = [];
@@ -76,11 +92,11 @@ for (const [key, id, kind] of FIELDS) {
     const expectedBool = (expected === true || expected === "true" || expected === "Yes" || expected === "yes" || expected === 1);
     pass = got === expectedBool;
   } else {
-    pass = String(got) === String(expected);
+    pass = normalize(got, kind) === normalize(expected, kind);
   }
 
   if (pass) ok.push({ key, id, kind, value: got });
-  else mismatches.push({ key, id, kind, expected, got });
+  else mismatches.push({ key, id, kind, expected, got, normExpected: normalize(expected, kind), normGot: normalize(got, kind) });
 }
 
 console.log(JSON.stringify({
