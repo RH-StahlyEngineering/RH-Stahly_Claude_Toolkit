@@ -1,0 +1,17 @@
+# Large DEM rasters — downloaded on demand via dem_lookup.ensure_dem_for_bbox.
+# The Fergus corridor TIFF is ~24 MB; new TIFFs are cached under ~/.claude/dem_cache/
+# and don't belong in the skill repo.
+*.tif
+*.tiff
+fergus_dem.json
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
