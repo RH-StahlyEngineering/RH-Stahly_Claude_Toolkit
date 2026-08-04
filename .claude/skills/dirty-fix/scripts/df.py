@@ -237,6 +237,23 @@ def ok(msg):
 # commands
 # --------------------------------------------------------------------------
 
+def hook_registered():
+    s = read_json(Path.home() / ".claude" / "settings.json", {}) or {}
+    blob = json.dumps(s.get("hooks", {}))
+    return "dirty-fix" in blob or "dirty_fix" in blob
+
+
+def _warn_hook():
+    """Incomplete installs are silent otherwise -- the skill works but the
+    escort never fires, which is the half that stops bundles from rotting."""
+    if hook_registered():
+        return
+    me = Path(__file__).resolve()
+    print("\n!! escort hook NOT registered -- sealed bundles will not hand themselves")
+    print("   off to the next session. One-time setup, per machine:")
+    print(f"     python \"{me}\" install-hook")
+
+
 def cmd_status(a):
     root, pid = project_key()
     bundles = list_bundles()
@@ -244,7 +261,7 @@ def cmd_status(a):
         print(json.dumps({
             "project": str(root), "project_id": pid,
             "store": str(store_dir()), "worktree": in_worktree(),
-            "bundles": bundles,
+            "hook_registered": hook_registered(), "bundles": bundles,
         }, indent=2))
         return 0
 
@@ -255,6 +272,7 @@ def cmd_status(a):
         print("context : GIT WORKTREE -- sub-spike mode; store keyed to main repo")
     if not bundles:
         print("\nno bundles. `df.py init <topic>` after Phase 0 is framed.")
+        _warn_hook()
         return 0
 
     print(f"\n{'STATE':<14} {'SLUG':<34} {'DISP':<8} {'ARCH':<10} SIZE")
@@ -263,6 +281,7 @@ def cmd_status(a):
         tag = b["slug"] + (" [sub]" if b["sub_spike"] else "")
         print(f"{b['state']:<14} {tag:<34} {b['disposition']:<8} {b['archetype']:<10} {size}")
 
+    _warn_hook()
     active = [b for b in bundles if b["state"] in ("FRAMING", "REDUCING", "LOOPING", "HARVESTED")]
     sealed = [b for b in bundles if b["state"] == "SEALED"]
     if active:
@@ -660,10 +679,9 @@ def cmd_doctor(a):
     st = store_root()
     if st.is_dir():
         print(f"store size    {human(dir_size(st))} across {len(list(st.iterdir()))} project(s)")
-    hp = Path.home() / ".claude" / "settings.json"
-    s = read_json(hp, {}) or {}
-    hooks = json.dumps(s.get("hooks", {}))
-    print(f"escort hook   {'registered' if 'dirty-fix' in hooks or 'dirty_fix' in hooks else 'NOT registered -- run: df.py install-hook'}")
+    print(f"escort hook   {'registered' if hook_registered() else 'NOT registered'}")
+    if not hook_registered():
+        _warn_hook()
     return 0
 
 

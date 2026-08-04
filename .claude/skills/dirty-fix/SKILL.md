@@ -37,6 +37,23 @@ python check.py --candidate <path>     exit 0 = acceptable, exit 1 = not
 
 Runnable by anyone, on any machine, with this skill uninstalled.
 
+## First run on a new machine
+
+The skill is complete when pulled, but **the escort hook is a separate one-time
+registration** — it lives in the harness settings file, which is not part of a skill.
+Without it, bundles seal correctly and then sit there: nothing hands them to the next
+session, which is the half that stops them rotting.
+
+`df.py status` says so when it isn't registered. When you see that warning, tell the
+human what it is and offer to run:
+
+```
+python <skill>/scripts/df.py install-hook
+```
+
+It backs up `settings.json`, validates the JSON before and after writing, and is
+idempotent. Requires Python 3.8+ and git.
+
 ## Always run first
 
 ```
