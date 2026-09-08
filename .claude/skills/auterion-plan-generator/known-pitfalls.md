@@ -149,7 +149,33 @@ For valley-floor launch sites in hilly terrain (the Snowy Mountains foothills se
 
 Incident reference: 2026-06-18 commit_gap_fills.py initial run. The launch-positions-only bbox was 50 km × 6 km; flight paths extended to 50 km × 7 km. Mid-VLOS-check Windows hit WSAENOBUFS after ~30 HTTP fallback attempts. Cleared by deleting the small TIFF and re-running.
 
-## 16. Calibration belongs to the power-cycle envelope, not the flight
+## 16. AMC rejects standalone waypoints that lack `AMSLAltAboveTerrain` / `Altitude` / `AltitudeMode` / `MISSION_ITEM_ID`
+
+**Confirmed 2026-06-24** (Fergus50 plan-set initial generation). AMC error on file load:
+
+```
+Mission: The following required keys are missing: AMSLAltAboveTerrain
+```
+
+The bare cmd 16 structure emitted by `figure8.py` and the older `generate_fergus_pair1.py::_wp_inner` (5-field: `autoContinue`/`command`/`doJumpId`/`frame`/`groupTag`/`params`/`type`) **works as inner items inside a CorridorScan's `TransectStyleComplexItem.Items`** — AMC normalizes those when it re-renders the complex item. **The same bare structure FAILS as standalone outer items** (climb at HOME, cross-line endpoints, figure-8 vertices when not nested in a complex item, cmd 17 LOITER hold, return-to-HOME).
+
+**Required AMC-side fields on every STANDALONE cmd 16 and cmd 17 item:**
+
+| Field | Value | Notes |
+|---|---|---|
+| `AMSLAltAboveTerrain` | numeric AMSL (= `params[6]`) | NOT `None` — AMC treats None as missing |
+| `Altitude` | AGL value (e.g., 50.0) | The user-facing altitude AMC shows in the elevation profile |
+| `AltitudeMode` | `3` | Match `mission.globalPlanAltitudeMode` |
+| `MISSION_ITEM_ID` | string of zero-based index (e.g., `"3"`) | AMC's display ID |
+| `groupTag` | `0` | Required on all SimpleItems including cmd 530/178 |
+
+For cmd 530 and cmd 178, `MISSION_ITEM_ID` and `groupTag` are required, but the altitude-related fields are not (they're frame-2 mission options, not navigation waypoints).
+
+Reference fix: `scripts/generate_fergus50_plans.py::amc_normalize_item` adds these on every item before serialization. Apply the same wrapper to any helper output (figure-8 vertices, cross-line waypoints, etc.) before nesting in a standalone position.
+
+**Why the existing CorridorScan-based generators didn't surface this:** every script-generated plan that worked (Fergus3..Fergus20, hilger_*, RBH_*) put cmd 16 waypoints INSIDE a CorridorScan or Survey complex item. AMC strips/re-adds these fields when normalizing the complex item on load, so the omission was invisible. The Fergus50 set is the first script-generated plan with standalone outer cmd 16 / cmd 17 items.
+
+## 17. Calibration belongs to the power-cycle envelope, not the flight
 
 Putting a figure-8 calibration on every individual flight is wrong on both sides:
 
@@ -161,3 +187,21 @@ Putting a figure-8 calibration on every individual flight is wrong on both sides
 **Planning implication:** you can't decide whether a given flight needs cal by looking at the flight alone — you need to know its position in the operator's session. When generating a group of plans, always ask up front: "how is the operator running these — single flights, or hot-swap pairs/sessions, and where are the power cycles?" Then assign cals per envelope. See SKILL.md → "Session model" for the rules and the canonical 2-flight hot-swap example.
 
 **Verification:** for a multi-plan set, count START cals and END cals across the group: exactly one START cal per envelope (in the first flight), exactly one END cal per envelope (in the last flight). Any other distribution is wrong.
+
+## 18. Sampling loop's last iteration must actually land at the endpoint
+
+When sampling a polyline at fixed-step intervals to build a sparse-waypoint survey, the loop condition `while s <= s_max + ε` evaluates BEFORE the iteration body — so when `s` first exceeds `s_max + ε` the loop exits WITHOUT appending the final endpoint sample. The "last" sample is then at `s = s_max − step` (one step short of the actual endpoint), and downstream geometry that anchors on `s_max` (closing arc center, transect direction, etc.) becomes mis-positioned by the missed step.
+
+**Fix:** use `while True` with an internal `break` AFTER the append, and break when `s_clamped >= s_max`. The internal break guarantees the endpoint sample is taken before exiting.
+
+Incident: 2026-06-29. v3 of Fergus50_S09_AB had the closing arc's tangent-1 length come out 38 m instead of the spec'd 25 m. Root cause was the survey loop's `while s <= b_along + 1` exiting without appending at `s = b_along` — the "anchor" the generator used for the arc was at `b_along + tan_B * step`, but item 18 was at `b_along` (one DP-sample short). The 13 m offset propagated through every downstream WP. Spec-verifier caught it (C5a FAIL: tangent-1 = 38.33 m vs spec 25 m). See `scripts/generate_fergus50_s09_ab.py` survey loop comment.
+
+## 19. Constant-R circle vs log spiral — pick by which end-constraint you're solving
+
+If a closing curve has a hard end-position AND end-heading constraint (e.g., "arc end at corridor right edge, heading perp_left"), reach for a **constant-R circle** first. Solve geometrically: the arc-end position is fully determined by the entry, the radius, and the sweep angle.
+
+Log spirals (R growing with arc length) are useful when curvature should *vary* — e.g., a sketched curve that opens up smoothly. But for a log spiral entered at `(R_t1, 0)` heading `+u` and sweeping 270° CW, the end position depends non-linearly on `R_end / R_start`. Forcing a specific end-position constraint typically requires `R_end ≈ 4·R_start` or worse, which makes the spiral much wider than the original sketch.
+
+**Heuristic:** if the constraint is "land at point X with heading Y exactly," start with constant-R. Only switch to spiral if you ALSO need variable curvature (e.g., to chord-cross a previous flight path mid-arc) AND can give up the exact end-position.
+
+Incident: 2026-06-29. v5/v6 of Fergus50_S09_AB used a log spiral R_start=25 → R_end=75; arc end landed inside the corridor at +33 m perp from centerline, not at the +75 m right edge as Ryan required. To make the spiral end at +75 perp would have required R_end ≈ 185 m — a 4× wider spiral than the v4/v5 dimensions. v7 switched to constant R = AGL = 50 m circle and landed within 9 cm of the corridor right edge. See SKILL.md §39d, §39e.

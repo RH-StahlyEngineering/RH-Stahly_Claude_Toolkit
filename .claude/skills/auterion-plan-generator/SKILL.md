@@ -206,6 +206,9 @@ The transit ×1.97 multiplier captures climb/decel that the naive Σ(d/v) misses
 | [scripts/analyze_gap_fills.py](scripts/analyze_gap_fills.py) | Iteratively place new launches in worst gaps until reaching a coverage target; rank tile-extension opportunities by acres-per-km |
 | [scripts/find_photogrammetry_launches.py](scripts/find_photogrammetry_launches.py) | Minimum-launch set-cover for photogrammetry areas — 3-mi radius + 100% VLOS + 400 ft AGL + ≤60 m from centerline. See lesson #16 for the operating constraints; lessons #18–22 for what made the algorithm choices land right. |
 | [scripts/build_3color_5vs8_kml.py](scripts/build_3color_5vs8_kml.py) | Trade-off visualization: classifies sample points as covered by both / only A / only B between two candidate launch sets and emits a 3-color KML. Pattern is reusable for any "N launches at 100% vs N-3 at 97%" decision. See lesson #21. |
+| [scripts/generate_powerline_pairs.py](scripts/generate_powerline_pairs.py) | LiDAR powerline-corridor mission generator. Polyline = the wire (not the road), 2-transect CorridorScan with built-in lateral clearance per lesson #25 (`min_lat = AGL × tan(15°)`). Includes `SKIP_LAUNCHES_1BASED` filter for the no-overlap subset selection per lesson #29. |
+| [scripts/scout_l6_l9_powerline.py](scripts/scout_l6_l9_powerline.py) | VLOS-alternative scouting against a SPECIFIC pair of plans (not the prior scout_vlos_alternatives.py's hardcoded list). Use as the template when you need to re-scout after switching from highway-polyline to powerline-polyline geometry — flight paths differ, alternatives need re-verification. |
+| [scripts/powerline_mission_report.py](scripts/powerline_mission_report.py) | Operational summary per lesson #32: per-plan flight time, total swath acres split once vs twice-covered, coverage of target KML as N/D fraction, PPSM math at user-reported per-pass values. Reusable for any multi-plan mission set. |
 
 All scripts use stdlib only (`json`, `math`, `urllib.request`) plus `shapely` for polygon set ops. The DEM raster handling uses `tifffile` for bilinear reads; `dem_lookup.ensure_dem_for_bbox` caches a per-bbox TIFF locally so per-point lookups are sub-microsecond.
 
@@ -473,6 +476,359 @@ The 3-color comparison build agent reported 1114 / 0 / 34 points in the three ca
 
 ---
 
+## Lessons learned — Fergus powerline LiDAR (2026-06-19)
+
+Same Hwy 81 corridor again, but a third operating mode: LiDAR mapping of an existing high-voltage **powerline corridor** (Hilger-Roy line). Hard constraint: drone never gets too close to the wire, measured as **15° off nadir** (not horizontal angle — easy to misread). Final result was a 6-pair, 12-plan set covering 37% of the corridor-union KML at 100% VLOS, with three deliberate gaps reserved for future fresh-battery follow-up flights at other bearings.
+
+### 25. "15° off nadir" is a lateral-clearance constraint, NOT a bearing offset
+
+When Ryan says "transects must be ≥ 15° off the powerline centerline," he means the wire must appear at least 15° off vertical from the drone's perspective — a *lateral clearance* requirement. He does NOT mean rotate the survey angle 15° away from the wire bearing. The flight lines themselves run *parallel* to the wire.
+
+Formula: `min_lateral_clearance = AGL × tan(15°)`.
+
+| AGL | Required lateral clearance | Sanity check |
+|---|---:|---|
+| 40 m | 10.72 m | per-pass swath = 80 m, transects sit at ±20 m → clearance to wire at center = 20 m ✓ if wire is at center; **fails** if wire is offset 9.3-30.7 m from the polyline |
+| 41 m | 10.99 m | (the geometry Ryan proposed) |
+| 70.104 m | 18.78 m | per-pass swath = 140 m, transects at ±35 m → 35 m clearance to centerline ✓ |
+| 121.92 m | 32.67 m | photogrammetry AGL — much less binding |
+
+**Misreading this constraint as a bearing offset** burned a full Q-and-A round in this session. If a future Ryan message says "15° off the powerline," default-interpret it as nadir-angle (lateral clearance) and confirm — don't rotate the survey angle.
+
+### 26. Polyline = wire (not road) for powerline-clearance LiDAR
+
+When the requirement is "stay laterally clear of the powerline," the safest base geometry is:
+- **CorridorScan polyline = the powerline itself** (not the highway centerline).
+- 2-transect setup (`CorridorWidth = 2·AGL`) → transects at `±AGL/2` perpendicular to polyline → automatically 35.05 m (at 70 m AGL) from the wire on the sustained passes.
+
+The powerline diverges from the highway by **median 27 m, max 446 m** along this corridor (see `Hilger-Roy existing line — joined.kml` vs `HighwayCenterline.kml`). Setting `polyline = highway` would leave the wire inside the off-nadir cone for ~50% of the route. Setting `polyline = wire` keeps clearance perfect on transects.
+
+Reference: `scripts/generate_powerline_pairs.py` — same hot-swap-pair architecture as Fergus3-20, but with `KML_POWERLINE` replacing `KML_CENTERLINE` in the polyline source.
+
+### 27. The four accepted "brief crossing" categories vs sustained transect clearance
+
+When `polyline = wire`, four parts of the flight path WILL cross or sit on the wire briefly. Ryan accepts these as operationally fine because they're not the sustained mapping passes:
+
+1. **Figure-8 calibration** — 11 vertices centered at the meeting point = on the polyline = on the wire
+2. **Cross-line** — by canonical design transects the polyline perpendicularly (pitfall #6)
+3. **CorridorScan entry/exit and the perpendicular jog between the two transects at the turnaround corners** — drone is briefly above the wire while turning around
+4. **Climb / RTL transit** from HOME to polyline endpoint — passes over the wire en route
+
+Sustained transects (the long parallel passes) MUST satisfy `≥ AGL × tan(15°)` lateral clearance. The validation script in `generate_powerline_pairs.py` distinguishes these and only flags transect-position violations. Brief jog violations show up as 0.0 m min distance — that's the four accepted sources, not a real failure.
+
+### 28. PPSM_per_pass is invariant under `2·AGL × speed = const`
+
+Ryan reported per-pass PPSM at 70 m AGL + 8 m/s: **min 21, avg 51.5, max 85.1**. He asked whether he could fly at 41 m + 14 m/s and keep the same PPSM. Math:
+
+```
+ppsm_per_pass ≈ pulse_rate / (swath_width × ground_speed)
+              = pulse_rate / (2·AGL × speed)
+```
+
+| Config | 2·AGL × speed | Same PPSM? |
+|---|---:|---:|
+| Current: 70 m × 8 m/s | 1120 m²/s | baseline |
+| Proposed: 41 m × 14 m/s | 1148 m²/s | within 3% → ✓ effectively same |
+
+**Implication:** swath shrinks (210 m → 123 m) so total ground covered shrinks, but per-pass PPSM holds. The faster flight at lower altitude is operationally identical per-pass.
+
+### 29. No-overlap launch selection: spacing ≥ 2 × tile_length
+
+Ryan's rule on adjacent pairs: "Overlap is bad if you're flying the same bearing — that's just redundant data." Only the natural ~122 m turnaround-extension overlap between adjacent tiles in a pair is OK; cross-pair overlap from too-close launches is a bug.
+
+For tiles of length L, **adjacent pair meeting points must be ≥ 2L apart.**
+
+- At 70 m AGL + 8 m/s → 10-min flight → L = 1.8 km → spacing ≥ 3.6 km
+- At 41 m AGL + 14 m/s → 10-min flight → L ≈ 3.0 km → spacing ≥ 6.0 km
+
+Greedy east-to-west selection from a set of launches: pick the easternmost, then the next one ≥ 2L west, etc. Drop launches in between. From the 9 HomePoints set, dropping L5/L7/L8 gave 6 non-overlapping pairs at the current scale (Fergus3..Fergus14).
+
+Reference: `SKIP_LAUNCHES_1BASED = {5, 7, 8}` in `scripts/generate_powerline_pairs.py`.
+
+### 30. Gaps between missions are a feature, not a bug — but they need to be worth a follow-up
+
+Quote Ryan: "We would like to leave our gaps between missions big enough that we can attack them with their own set of fresh batteries to make it worth our while. We do not want the gaps to be a two-minute flight."
+
+A 1-2 km gap of corridor between adjacent pairs is "big enough" — it fits a single-isolated specialized flight. A 200-300 m gap is too small; you'd burn cal cycles for trivial coverage. **Target gap floor: ≥ 1 km of corridor between adjacent pair coverage zones.** Below that, drop one of the adjacent launches.
+
+Dropped launches become natural starting points for the *specialized* follow-up flights — see lesson #31.
+
+### 31. Different mission features = different flight-line bearings
+
+Powerline corridors with crossing lines (a main wire + branch wires) cannot all be surveyed with a single bearing. Each set of wires needs flight lines roughly parallel to itself:
+
+- **Main flight set:** transects parallel to the main powerline. Crossing lines, where they exist, get **perpendicular-crossed** by these transects — which produces low-quality powerline data for the crossing wires (LiDAR returns from wires hit perpendicular to their length are sparse).
+- **Crossing-line set:** a second, specialized flight per crossing-line section, transects parallel to that line. Survey angle changes; usually a single short flight, not a hot-swap pair.
+
+The current 12-plan set is for the main line only. Crossing-line follow-ups are a separate scope, computed against the same corridor-union polygon but at the crossing line's bearing. Don't shoehorn both into a single mission set.
+
+### 32. Operational report should split flight time, acres, and PPSM by once-covered vs twice-covered
+
+When summarizing a multi-plan mission for Ryan, the format that works is:
+
+```
+Flight time per plan (calibrated AMC estimate) and total
+  → each plan, plus sum
+
+Coverage (shapely on the per-tile swath = polyline buffered by 1.5·AGL each side)
+  Total swath = unary_union of all tile coverage polygons
+    of which Once-covered = swath - twice-or-more zones
+    of which Twice-or-more = unary_union of within-tile twice zones + between-tile turnaround intersections
+
+Vs the target KML
+  Numerator = intersection(swath, target) acres
+  Denominator = target KML area
+  % = numerator / denominator (this is what Ryan asks for; spell it out as a fraction)
+
+PPSM math
+  Once-area × per-pass-PPSM = points from single-coverage zones
+  Twice-area × 2 × per-pass-PPSM = points from double-coverage zones
+  Surveywide avg PPSM = total points / total in-target area
+```
+
+**Crucially**: don't include cross-line, fig-8, or transit areas in the swath calculation. Ryan was explicit: "I'm just talking about the area of the actual mission." Only buffer the CorridorScan polyline (extended by TurnAroundDistance at the ends).
+
+Reference: `scripts/powerline_mission_report.py`.
+
+### 33. AMC's mission picker shows the missions root only; old files persist there until you wipe them
+
+AMC scans `<Documents>/Auterion Mission Control/Missions/` on startup and doesn't recurse into subfolders. If you delete files while AMC is open, AMC's picker may still show stale entries — Ctrl+R or a restart refreshes it. Pre-existing calibration plans (`hilger_*`, `RBH_*`, `CourthouseLidar*`, `stahlytest*`) live in this same folder and **must never be touched by skill-generated cleanup** — they're Ryan's controller regression set.
+
+Cleanup scope when starting fresh: `Fergus<N>.plan` (capital F, this-session plans) + `fergus_*.plan` (lowercase, prior corridor-tiler outputs). Preserve `Fergus1.plan`, `Fergus2.plan`, and their `(1)` Drive duplicate backups (AMC-native originals). Preserve ALL non-Fergus calibration plans.
+
+---
+
+## Lessons learned — Fergus highway-corridor LiDAR with mobile crew (2026-06-24)
+
+A long iteration on a 28-mi Hwy 81 corridor at 50 m AGL / 11.5 m/s, with a 2-person crew running a "ground controller perch" workflow distinct from prior single-operator hot-swap pair geometry. The shape of the final mission set differs in several important ways from earlier corridor work — captured here so we don't re-derive them.
+
+### 34. Session = round trip A→B→A, hot swap mid-trip at B, one perch per A→B leg
+
+Ryan's 2-person workflow for the long Hwy 81 corridor:
+
+- **Session**: drone takes off from A, flies one direction to B (one battery, ~10 min), helper hot-swaps at B, drone flies back to A on the return battery (~10 min), lands at A. End of session.
+- **A**: launch + return-landing. PIC starts AND ends the session here.
+- **B**: hot-swap point. Helper pre-positions there before session start. Drone lands at B between batteries.
+- **Perch (P)**: where the PIC drives to during the A→B flight to maintain VLOS during landing at B. Helper handles the physical hot swap; PIC commands the landing approach from the perch via radio.
+- **Between sessions**: pack up at A, drive along the road to A_{i+1} (= same location as B_i in a contiguous-strip layout).
+
+This is a fundamentally different architecture than the single-operator "hot-swap meeting-point pair" used in the earlier Fergus 3-38 work — there is no shared meeting-point figure-8 between the legs. **Each session is a closed A→B→A loop with calibration only at A (power-up + power-down).**
+
+### 35. Calibration cadence and ORDER under the session model
+
+Per Ryan's directive:
+- Calibration (5 min static + straight-line + figure-8) happens ONLY at session start (power-up at A) and session end (power-down at A). **NOT before or after a hot swap.**
+- The 5 min static is on the ground (sensor warmup / shutdown), NOT a hover.
+- In-flight cal order is SYMMETRIC about the survey:
+  - Start of session (A→B leg, after takeoff): straight-line FIRST, figure-8 SECOND, then survey
+  - End of session (B→A leg, before landing): survey, figure-8 FIRST, straight-line SECOND, then land
+- During hot-swap (mid-session), no cal. Just takeoff → survey → land.
+
+This corrects the skill's earlier "figure-8 first at start" convention, which had it backwards. Symmetric framing matters: the IMU sees the same sequence in reverse on the way out and the way back.
+
+### 36. Cross-line ("straight line") goes WHERE IT MAXIMIZES POLYGON COVERAGE, not necessarily through A
+
+The cross-line / straight-line that the LiDAR uses for kinematic alignment doesn't have to pass through the launch point. **Position it anywhere that maximizes the line's intersection with the target polygon**, particularly through jut-outs (polygon protrusions perpendicular to the main corridor). The drone:
+
+1. Takes off at A, climbs to AGL
+2. Transits to the cross-line start position (may be 100–500 m off-axis from A)
+3. Flies the cross-line
+4. Transits back into position for the survey
+
+For a polygon with perpendicular jut-outs:
+- Find each jut-out via `target_polygon.difference(highway_centerline.buffer(swath_half))`
+- The cross-line aligns with the jut-out's **major axis** (oriented bounding box long axis) and passes through the jut-out's **centroid**
+- Length = polygon-along-axis extent + ~75 m margin each side
+- 2D search (angle × perpendicular offset from centroid) gives the optimum
+
+Reference: `scripts/optimize_crosslines.py`. Improvements observed in the Fergus polygon: 122 m → 853 m of in-polygon traversal at A1, 56 m → 2059 m at A13 (Roy end with 51.5 ac jut-out).
+
+The transit cost (A → cross-line perpendicular distance) is typically 50–250 m, so 1–4% battery hit per cross-line. Acceptable.
+
+**Note (2026-06-24)**: Ryan ultimately deferred the jut-out targeting in favor of a simpler canonical-perpendicular cross-line at each A for the final mission set. Keep the optimization available for cases where the jut-out content is high-value (utility easements with branch features, etc.).
+
+### 37. Perches are at LOCAL ROAD HILLTOPS, identified by DEM profile, one per A→B leg
+
+The "ground controller perch" is where the PIC parks during the A→B leg flight. Methodology (locked in from Ryan's manual placement on 2026-06-24):
+
+- **On or very near the road centerline** (within 50 m). PIC stays on Hwy 81 the whole time — no off-road driving.
+- **Local elevation maximum along the road** in the A→B segment. Cut a DEM profile of the road from A_i to B_i; pick a local peak.
+- **Somewhat close to B** (within ~0.5–2.5 km of B). Close enough that PIC can clearly see the landing zone; far enough that PIC has time to drive there during the A→B flight.
+- **Default fallback** if no local maximum exists in the A→B segment (road is monotonic): use B itself as the perch.
+
+Algorithm:
+
+```
+For each session i:
+  Sample DEM every 50 m along Hwy 81 from A_i to B_i
+  Find local maxima (elev > both neighbors within ±100 m window)
+  Pick the local max closest to B_i (or highest if multiple)
+  If no local max: perch_i = B_i
+```
+
+KML convention: Green paddle = A, Orange paddle = B, **Blue paddle = Perch**. Same circle-paddle style across all three so they read as a triplet for each session.
+
+### 38. PPSM is preserved under `2·AGL·speed = const`, NOT under altitude or speed individually
+
+At 50 m AGL / 11.5 m/s, the per-pass density product is `2·50·11.5 = 1150`. The Fergus 70 m / 8 m/s reference is 1120. These match within ~3%, so the canonical per-pass PPSM values (min 21, avg 51.5, max 85.1) apply at both configurations.
+
+Implication: when Ryan asks "can I fly at X AGL and Y speed and get the same PPSM," the answer is YES iff `2·X·Y ≈ 1120`. Solve for the speed at any target AGL:
+- AGL 41 m → speed 13.7 m/s
+- AGL 50 m → speed 11.2 m/s
+- AGL 70 m → speed 8.0 m/s (baseline)
+- AGL 121.9 m (400 ft) → speed 4.6 m/s
+
+The trade-off is **swath width**: `3·AGL` is the combined coverage for 2 transects. Lower AGL means smaller swath — more passes to cover the same target. For the Fergus 1622 ac corridor (avg 145 m wide), 50 m AGL = 150 m swath = single-strip coverage; 41 m AGL = 123 m swath = doesn't cover, needs gap-fill passes.
+
+### 39a. Corrected per-leg structure (2026-06-24 v2)
+
+Lessons #35 + #36 above describe the EARLIER framing where I conflated the kinematic line, the cross-line, and the closing transect. **Ryan corrected this on 2026-06-24.** The right model has TWO orthogonal categories of items:
+
+**Category A — CALIBRATION** (only at session start and session end, NOT at hot-swap takeoffs):
+- **Kinematic straight line** — perpendicular to the survey direction, length = `SPEED × 10 s` minimum (e.g., 115 m at 11.5 m/s). Used by the LiDAR IMU for dynamic in-air alignment.
+- **Figure-8** — Gerono lemniscate, 11 waypoints. **Centered at the END of the straight line, not back at the takeoff point** — saves the wasted transit back to A.
+
+Calibration order is symmetric and REVERSES between the session's two missions:
+- **Session-start mission (A→B)**: straight line FIRST, then figure-8.
+- **Session-end mission (B→A)**: figure-8 FIRST, then straight line.
+
+**Category B — CLOSING MANEUVERS** (data-tie maneuvers, ONLY for corridor surveys). **Revised 2026-06-29 (v7) to a single combined "survey→transect transition":**
+
+- **Tangent 1** — straight segment from anchor (last survey WP) heading `tan_B` (survey forward direction), length **R_t1 = AGL/2 m** (= 25 m at AGL 50). Required so the arc has a clean tangent-entry instead of a kink at the anchor.
+- **Closing arc** — constant-radius circle, **R_arc = AGL m** (= 50 m at AGL 50), **270° clockwise sweep** centered at `tangent_1_end + R_arc · perp_right_B`. The arc's end naturally lands at `anchor + (R_t1 + R_arc) · tan_B + R_arc · perp_right_B`, which is **at the corridor right edge (+1.5·AGL perp from highway centerline)** with heading **`perp_left of tan_B`** (= perpendicular to centerline). The arc occupies the perp_right side of the corridor (outside the corridor's right half), so the LiDAR sweep during the arc doesn't interfere with the survey path.
+- **Straight perpendicular transect** — from arc end heading `perp_left`, length **≥ corridor_width + 50 m margin** (e.g., 200 m at AGL 50 where corridor_width = 3·AGL = 150 m). This straight segment IS the cross-line transect. It crosses the corridor cleanly perpendicular, exits the left edge, and continues ~50 m past for FOV margin.
+
+**There is NO separate "closing transect from anchor"**. The arc end IS the transect start, and the perpendicular straight line that follows the arc IS the transect. The drone never goes back to the anchor between arc and transect.
+
+Waypoint density: arc sampled at **9 WPs total** (1 entry + 8 intermediate), matching figure-8 density.
+
+Closing-maneuver order is the SAME in both missions: **tangent 1 → arc → straight perpendicular transect**.
+
+**Combined per-leg structure for a corridor-survey hot-swap pair:**
+
+| Mission 1 (A→B, session start) | Mission 2 (B→A, session end) |
+|---|---|
+| Takeoff at A | Takeoff at B (no cal) |
+| Straight line (cal) | Survey transect (B→A) |
+| Figure-8 (cal, centered at end of straight line) | Tangent 1 + arc + perpendicular transect (closing) |
+| Survey transect (A→B) | Figure-8 (cal, reversed order) |
+| Tangent 1 + arc + perpendicular transect (closing) | Straight line (cal, reversed order, heading toward landing position) |
+| HOLD at end of perpendicular transect | HOLD at end of straight line |
+
+**Mission 1 final item count (AGL 50, N sparse survey WPs): 2 (header) + 2 (kinematic) + 11 (figure-8) + N (survey) + 1 (tangent 1 end) + 8 (arc intermediate) + 1 (arc end) + 1 (transect end) + 1 (LOITER) = N + 27**. For Session 9 with N=4: 31 items.
+
+**Why constant-R circle and not a log spiral**: the user previously asked for a log spiral (varying curvature) but the geometric requirement "perpendicular at corridor right edge exactly" forces R_end ≈ 4·R_start for the spiral end to land where required — making the spiral ~2× wider than operationally needed. A constant-R = AGL circle satisfies the geometric requirements cleanly with simpler math. See `scripts/generate_fergus50_s09_ab.py` for the reference implementation (v7, 2026-06-29).
+
+### 39b. Sparse survey waypoints — emit waypoints ONLY at bearing changes
+
+When the survey polyline runs through long straight stretches of road or wire, **don't emit waypoints at fixed intervals along the straights**. With `AltitudeMode = 3` (terrain-relative), AMC auto-interpolates terrain following between sparse waypoints — so a single waypoint at each end of a straight section is sufficient.
+
+Densely-sampled straight segments (one waypoint every 100 m on a 4-km straight) **risk the drone overshooting and backtracking** to hit each redundant point exactly, breaking the line and degrading scan uniformity.
+
+**Rule**: walk the polyline, emit a waypoint at each end of each curved segment AND at each end of each straight segment. A long straight = exactly 2 waypoints.
+
+Reference implementation: use Douglas-Peucker simplification with a tolerance ≈ 5 m on the polyline; that retains the corner structure and drops collinear intermediate points. The bearing-change rule maps cleanly to "the points DP keeps."
+
+### 39c. Closing maneuvers are for corridor surveys only
+
+The tangent-1 + arc + perpendicular-transect closing pattern (lesson #39a Category B) is specific to **corridor LiDAR surveys**. For non-corridor missions (open-polygon photogrammetry, single-tile LiDAR scans, calibration-only flights), the closing maneuvers don't apply — those missions end with the cal block + return to HOME.
+
+The closing maneuvers exist because:
+- Corridor surveys produce long, narrow point clouds where the ends are most likely to lose density / overlap with adjacent missions.
+- The arc creates a smooth transition from the survey direction (`tan_B`) to the perpendicular-transect direction (`perp_left of tan_B`) — without an arc, the drone would either backtrack to anchor (wasteful) or take a hard ~90° corner (kinematically rough).
+- The perpendicular transect itself is the cross-line that ties this mission's point cloud to the adjacent mission's at the corridor boundary.
+
+### 39d. Closing-arc geometry — the perpendicular-entry constraint (2026-06-29)
+
+The arc's two non-negotiable geometric properties:
+
+1. **Arc end must be AT the corridor right edge** (= `+1.5·AGL` perp from highway centerline = `anchor_perp + AGL`). The straight perpendicular transect starts here.
+2. **Arc end heading must be EXACTLY `perp_left of tan_B`**. The perpendicular transect direction is `perp_left of tan_B`, and any heading mismatch creates a turn at the transition.
+
+For a 270° clockwise sweep from `tan_B` heading, the final heading is automatically `perp_left of tan_B` (rotation: `tan_B → perp_right → −tan_B → perp_left`). The end POSITION is determined by `R_arc` and the tangent-1 length:
+
+- For a constant-R circle entered at `(L_t1, 0)` heading `+u` and swept 270° CW: arc end at `(L_t1 + R, R)` in local frame (u = tan_B, v = perp_right).
+- Anchor is at `(0, 0)`, anchor perp = `+AGL/2` from centerline. For arc end at `+1.5·AGL` perp: arc end v-coord = `+1.5·AGL − AGL/2 = +AGL`. So we need `R = AGL`.
+
+That's why **R_arc = AGL** (= 50 m for AGL 50) is the canonical value. Lower R lands the arc inside the corridor (not at the edge); higher R overshoots past the edge.
+
+### 39h. Rally point on every corridor mission (2026-07-03)
+
+Every .plan file should carry a `rallyPoints` block with one point near the mission's last nav waypoint. The rally point is a safety failover the autopilot flies to on an RC-link loss or low-battery event.
+
+Pattern established by Ryan on `8BA.plan`:
+
+```json
+"rallyPoints": {
+  "points": [[<lat>, <lon>, 45.72]],
+  "version": 2
+}
+```
+
+Where `[lat, lon]` = last-nav-WP coords offset by **+37.3 m East, +45.4 m North** (~59 m NE, ~150 ft AGL default altitude 45.72 m = 150 ft).
+
+Implementation: after building `items`, walk `reversed(items)` to find the last cmd 16/17 WP, compute the offset via `RALLY_OFFSET_EAST_M / (111132 · cos(lat))` and `RALLY_OFFSET_NORTH_M / 111132`, and set `plan['rallyPoints']`. See `scripts/generate_all_fergus50_plans.py::add_rally_point` for the canonical helper — call it right before serialize.
+
+### 39i. Mid-project strip resize: extend remaining battery utilization (2026-07-03)
+
+If a project's corridor plans are generated for a conservative battery duration and a portion has already flown (with timestamps captured in the mission-order CSV), the REMAINING plans can be regenerated with a longer strip to use the surplus battery. This is a common "we learned we have margin" adjustment.
+
+**Procedure:**
+1. Determine which sessions are complete (from `completion_time` column of the ordering CSV).
+2. Compute `east_boundary_along = (min(completed_old_sessions) - 1) × old_strip_len` — that's the boundary between "done" and "remaining."
+3. Choose `N_NEW_STRIPS` such that `new_strip_len = east_boundary_along / N_NEW_STRIPS` gives the desired battery-utilization uplift (e.g., +16.7 % → drop N_STRIPS by 1 across the remaining sessions). Whole-strip snapping means the actual % rarely lands exactly on request; report the actual % to the user.
+4. Archive the old S01..N_OLD_REMAINING plans to `old/superseded_YYYY_MM_DD/` — don't delete permanently.
+5. Regenerate only the new-scheme sessions. Skip completed old sessions.
+6. When regenerating the mission-order CSV, LOAD prior completion timestamps by filename and preserve them (`prev_timestamps[fname]` lookup). Never wipe manually-captured completion times on a re-run.
+7. Save the new CSV as v3 (or bump version) so the user can compare timelines.
+
+Reference: `scripts/order_fergus50_missions.py` and the `2026-07-03` block in `generate_all_fergus50_plans.py`.
+
+### 39f. DEM-based intermediate waypoint insertion for AGL tolerance (2026-06-29)
+
+Sparse waypoints along a straight or gently-curving segment leave the drone at a **linearly-interpolated AMSL** between endpoint WPs — but the ground beneath rises and falls. Over a hill peak, the drone (holding interpolated AMSL) ends up LOWER than target AGL; over a valley, HIGHER. If any point along the segment sees ground deviate from the AMSL-interpolation line by more than the AGL tolerance, we must insert an intermediate WP at that point (at target AMSL = terrain_amsl + AGL) so the drone tracks the ground properly.
+
+**Algorithm (vertical Douglas-Peucker, gated by min spacing):**
+
+For each segment `(p1, p2)` where p1, p2 = (x, y, target_amsl):
+1. Sample the DEM every 5 m along the horizontal segment.
+2. At each sample position `s`, compute `deviation = (terrain_amsl(s) + AGL_target) − interp_amsl(s)` where `interp_amsl` is the linear interpolation between p1.amsl and p2.amsl.
+3. If `max(|deviation|)` along the segment exceeds `TERRAIN_TOL_M` (default 10 m), insert a new WP at the point of maximum deviation, at its target AMSL.
+4. Recursively subdivide the resulting sub-segments until every sub-segment has `max(|deviation|) ≤ TERRAIN_TOL_M`.
+5. **Min-spacing gate**: if a proposed insertion would create a WP < 30 m from an existing WP on the segment, log it. Two behavior modes:
+   - **skip**: don't insert; accept the >10 m AGL deviation (safer for flight planning, but leaves altitude drift over steep short slopes).
+   - **override** (the default for Ryan's corridor plans): insert anyway; log the tight spacing for after-the-fact review.
+
+**Where to apply the refinement:**
+- **Survey path** (sparse DP polyline)
+- **Closing block**: tangent-1, arc, perpendicular transect (all together as one refinable polyline)
+- **Skip**: figure-8 (small enough that DEM variation doesn't matter), kinematic calibration line (short, off-corridor, doesn't matter much)
+
+**Reference implementation**: `scripts/generate_all_fergus50_plans.py::terrain_refine_polyline`. It applied 98 total inserts across the 20 v7 Fergus50 plans (all satisfying 30 m spacing naturally). See `known-pitfalls.md` #20 for the interpolation-behavior notes.
+
+### 39g. Don't use a log spiral when a circle satisfies the constraints
+
+If the constraint is "arc end at a specific position with a specific heading", a constant-R circle satisfies it cleanly. A log spiral has continuously-varying R, so the position constraint becomes a single equation in `R_end` (the spiral's growth-rate parameter), which usually doesn't have a clean solution at operationally-reasonable values.
+
+Spec rationale: when Ryan sketched a varying-curvature teardrop on the v4 plot, the natural read was "use a log spiral." But once we added the constraint "end at corridor right edge perpendicular", the spiral solution required `R_end ≈ 4·R_start`, making the arc ~2× wider than the sketch. The constant-R circle satisfies the constraint with R = AGL — smaller, simpler, exact.
+
+The reverse-decision is also valid: if you're solving for a smooth shape where the END constraint is "freer" (e.g., "loop must be inside the corridor's right half but exact end position doesn't matter"), a log spiral with growing R can match a sketch of varying curvature. Don't reach for spirals until you've checked whether your end constraint forces a clean R.
+
+Open polygons don't have this end-of-corridor concern — the survey closes on itself geometrically.
+
+### 39. Battery is per FLIGHT (10 min), not per session — strip length is half the round-trip range
+
+Ryan's 10-minute battery applies to ONE flight leg, not the round trip. For a session A→B→A:
+- Outbound leg: 10 min, includes ~2.75 min overhead (takeoff, climb, straight-line cal, figure-8 cal, transit, landing) → ~7 min survey
+- Return leg: 10 min, includes ~1 min overhead (takeoff, transit, landing — no cal mid-session) → ~9 min survey
+- **Strip length is bounded by the outbound leg's survey time** at ~7 min × 11.5 m/s = ~4.8 km maximum
+
+The return leg has battery to spare (extra ~2 min unused) — that's safety margin against headwind on the return.
+
+For a 28 mi corridor at 4.54 km strips: 10 strips, 10 sessions, 20 flights, ~187 min total flight time, ~87% coverage with 71.9 ppsm surveywide avg. Reference: `scripts/build_simple_layout.py`.
+
+---
+
 ## Final checklist before declaring a plan ready
 
 - [ ] Constants preserved (vehicleType, firmwareType, globalPlanAltitudeMode, terrain rates, camera Manual mode)
@@ -489,3 +845,83 @@ The 3-color comparison build agent reported 1114 / 0 / 34 points in the three ca
 - [ ] User instructed to open + save in AMC before pushing to controller
 - [ ] `scripts/coverage_check.py` (or coverage_check_multi for multi-plan ops) confirms target KML is covered
 - [ ] `scripts/los_check.py` reports 100% VLOS from the plan's plannedHomePosition; if not, scout_vlos_alternatives.py for the nearest VLOS-clean launch position
+- [ ] **For powerline-corridor LiDAR missions**: every sustained transect waypoint is ≥ `AGL × tan(15°)` lateral distance from any powerline (see lesson #25). Brief crossings at fig-8 / cross-line / turnaround jog / climb-RTL transit are accepted (lesson #27).
+- [ ] **For multi-pair powerline missions**: adjacent pair meeting points ≥ 2 × tile_length apart so coverage doesn't overlap beyond the natural turnaround zone (lesson #29). Gaps between pairs ≥ 1 km of corridor (lesson #30).
+- [ ] **Don't conflate mission modes**: LiDAR corridor (no 3-mi radius), photogrammetry 2-person (3-mi + ≤60 m centerline at 400 ft AGL), and LiDAR powerline (lateral clearance + powerline-as-polyline) all have different binding constraints. See lessons #16, #25.
+- [ ] **For 2-person mobile-crew highway-corridor missions** (Hwy 81 architecture): session = A→B→A round trip with cal at A only, mid-session hot swap at B (NO cal), perch P at road hilltop for PIC. Cross-line and figure-8 order is symmetric about the survey (straight-line first at start, figure-8 first at end). See lessons #34–#37.
+
+## 41. PPK base-station power-cycle constraint (2026-07-16)
+
+When a project is post-processed with PPK against ground base stations, the base geometry becomes a **hard mission-grouping constraint** that usually dominates the flight-time/battery budget:
+
+- **One base station per power cycle** — a whole power cycle (start-cal → all items → end-cal, driving between items with the drone powered on) is post-processed against a single base occupation. You cannot mix bases within a cycle.
+- **No point of a cycle's trajectory may exceed the max PPK baseline** from that cycle's base. For the Fergus Electric job the limit is **10 miles** (Ryan-stated); the generic Phoenix rule of thumb is ~7 mi (see memory `reference_phoenix_nav_ppk_readiness`). Confirm the number with the surveyor per job.
+- **Check the worst-case point**, not the centroid: the farthest vertex of every tap line / area polygon in the cycle must be within the baseline of the base. A centroid check will pass missions whose ends bust the limit.
+
+**Planning implication:** group power cycles by (1) which base can see the whole trajectory ≤ baseline, THEN (2) fit the flight-time budget within that. The base radius, not the 13-min flight budget, is typically what caps a cycle's length. Endpoints reachable by only one base (project extremities) force that base's cycle. Emit a KML with each base, its baseline ring, and the color-coded cycle trajectories for the surveyor to sign off before generating .plan files.
+
+## 42. Montana State Plane EPSG + coordinate conversion (2026-07-16)
+
+Ryan's Montana control-point coordinates are in **US/International feet**. The EPSG pair (do NOT state these backwards — verify before asserting):
+
+- **EPSG:6515 = NAD83(2011) / Montana (feet)** ← Ryan's coordinates are in this
+- **EPSG:6514 = NAD83(2011) / Montana (meters)**
+
+Convert to WGS84 with `pyproj.Transformer.from_crs(6515, 4326, always_xy=True).transform(easting_ft, northing_ft)` — pass the **raw feet** values; pyproj's 6515 definition already carries the feet unit, so do NOT pre-multiply by 0.3048. Sanity-check the output lands in the project area (Fergus ≈ 47.3°N, -109.1°W) before trusting it. A wrong unit/EPSG assumption lands the points in Idaho.
+
+## 43. Tap-line and area (polygon) gap-fill missions — different treatment (2026-07-16)
+
+Leftover coverage after the main corridor comes in two flavors that fly differently:
+
+- **Tap lines** (powerline spurs, given as KML LineStrings): fly as a **line corridor** — waypoint transects following the tap line, **2 passes** offset ±AGL/2 (same as the main corridor's two transects). Extend each line **50 ft (15.24 m) past both endpoints** (end buffer). No side buffer (the 2-pass offset covers the sides).
+- **Areas** (given as KML polygons): fly as an **AMC `TransectStyleComplexItem` polygon survey**. Set `angle` = the polygon's **principal (longest) axis** so flight lines run as long as possible (fewest turnarounds). Buffer the polygon **50 ft (15.24 m) on the ends + 25 ft (7.62 m) on the sides** before generating transects.
+- **Same AGL and line spacing** as the corridor (50 m / 50 m for the Fergus 50 m config).
+- **No closing perpendicular transect** on these gap-fill missions (Ryan dropped that requirement for taps/areas 2026-07-16) — taps are just the 2-pass corridors, areas just the surveys.
+- **Calibration**: bracket each **power cycle** (not each item) with start + end cal. Additionally give any single area whose own flight exceeds ~5 min its own dedicated cal pair.
+- Order items **by position** (east-to-west or the project's long axis) and intermix taps + areas so the crew makes one sweep with no backtracking for pickups.
+
+## 44. Verify ACTUAL coverage from the flown .nav, not just the plan (2026-07-17)
+
+A plan can pass every generation check and still leave a real hole — because the survey polygon
+was drawn smaller than the target. On the Fergus job, Area4 was redrawn smaller than the "Gap 1"
+it was meant to fill and silently left **47% uncovered**, caught only after the crew had almost
+demobbed. The fix is to close the loop between PLANNED and ACTUALLY-FLOWN coverage.
+
+**Tool:** `scripts/nav_coverage_check.py <scan.nav> --agl 50 --fov 90 [--target gap.kml]`
+- Read-only scan of the NovAtel-binary `.nav` for lat/lon doubles in a plausible window (robust
+  heuristic; no full log parse). Same trick gives quick trajectory-extent / adjacent-scan-overlap
+  checks (project both extents onto the corridor centerline; confirm overlap, not a gap).
+- Buffers each fix by the LiDAR **half-swath = AGL · tan(FOV/2)**, unions to a footprint polygon.
+  For the MiniRanger (90° FOV): half-swath = AGL, so ground swath = **2·AGL** per pass (100 m at
+  50 m AGL). Overlap % is a *planning* input (sets line spacing) and does NOT enter here — the
+  flown trajectory already reflects where the lines went.
+- With `--target`, reports % of the target covered and writes the uncovered remainder to a KML.
+
+**When to run:** (a) before demob, against each target/gap polygon, to catch holes while you can
+still re-fly; (b) at plan-build time, verify every survey polygon *contains* its original target
+polygon (union it in if short — lesson: a redrawn area is not guaranteed to cover the gap it
+replaced); (c) between adjacent scans to confirm swath overlap.
+
+## 45. Fly-to-next vs land-and-drive is a BATTERY decision, not a time decision (2026-07-17)
+
+For scattered multi-target missions (taps / spot features) you repeatedly choose: fly the drone
+to the next target, or land it, put it on the truck, drive, relaunch. The intuition "drive if it's
+far" is usually wrong on *time*:
+
+- Fly time ≈ D / speed. Land+drive ≈ (fixed overhead ~3 min) + D / drive_speed. Driving (~30 mph
+  = 13.4 m/s) is barely faster than flying (~11.5 m/s), so the fixed land/relaunch overhead
+  dominates: **flying wins on wall-clock out to ~9 miles.**
+- So the ONLY reason to land-and-drive short/medium gaps is to **conserve survey battery** (and to
+  respect VLOS, if that's binding — for a 2-person crew that keeps moving, it often isn't).
+
+**Rule:** set a distance threshold from the battery budget, not from time. Fly to the next target
+if the gap is under the threshold; land-and-drive if farther. On Fergus, **4,000 ft** was the
+sweet spot — it flew the dense cluster of near targets (longest hop 53 s of battery) and drove
+only the genuinely long jumps. Look for a natural break in the gap-distance distribution; check
+that no continuous fly-run exceeds one battery.
+
+**Structural consequence:** a power cycle splits into multiple *sub-mission plan files* — one per
+fly-run, broken at every gap over the threshold (and at power-cycle/base boundaries). Cal flights
+go only on the first and last sub-mission of each power cycle; the drone stays powered on the truck
+across the drive-breaks (INS holds), so no re-cal between them. See `generate_fergus_remaining_plans.py`
+(FLY_THRESHOLD_M) for the reference implementation.

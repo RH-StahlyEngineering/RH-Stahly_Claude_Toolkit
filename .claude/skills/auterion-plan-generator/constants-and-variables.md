@@ -44,6 +44,20 @@ practice — Ryan flew the Fergus corridor at AGL 70 with a 12-min cap, not the
 original 40 / 10-min. Treat AGL and duration cap as variables; default to 40 / 10
 for new missions until the user specifies otherwise.
 
+### Required AMC fields on every SimpleItem
+
+AMC rejects plans whose standalone navigation items omit certain UI fields. The bare structure emitted by `figure8.py` and the inner-Items pattern in `generate_fergus_pair1.py` works **only inside a CorridorScan/Survey complex item** (AMC normalizes those). For STANDALONE outer items, AMC requires:
+
+| Field | Applies to | Value | Notes |
+|---|---|---|---|
+| `MISSION_ITEM_ID` | all SimpleItems | string of 0-based index, e.g., `"3"` | AMC display ID |
+| `groupTag` | all SimpleItems | `0` | Required for cmd 530, 178, 16, 17, etc. |
+| `AMSLAltAboveTerrain` | cmd 16, cmd 17 standalone | numeric AMSL = `params[6]` | NOT `None` — AMC treats None as missing |
+| `Altitude` | cmd 16, cmd 17 standalone | AGL value (e.g., 50.0) | The AGL value AMC shows in its elevation profile |
+| `AltitudeMode` | cmd 16, cmd 17 standalone | `3` | Match `mission.globalPlanAltitudeMode` |
+
+See `known-pitfalls.md` #16 for the incident reference and the `amc_normalize_item` wrapper. Apply that wrapper to any helper output (figure-8 vertices, cross-line waypoints, climb waypoints, LOITER hold) before serializing.
+
 ### Mission structure (item sequence)
 
 Each mission's sequence is assembled from the same blocks; figure-8 calibrations are conditional based on the flight's role in its power-cycle envelope. **The survey + cross-line are always present.**
@@ -90,6 +104,48 @@ Use `json.dumps(plan, separators=(',', ':'))` and write as bytes via `open(path,
 | Polyline length | `5.82803 · a` | Use this to solve for `a` given duration × speed |
 | Closure | Final vertex returns to centroid | Drone completes the 8 before moving on |
 | Crossing point | Vertices 0 and 5 both at centroid | This is the true self-intersection |
+
+### Corridor-survey closing arc geometry (v7, 2026-06-29)
+
+Used in the survey→perpendicular-transect transition for corridor LiDAR missions. See SKILL.md §39a–39e for the full rationale.
+
+| Property | Value | Notes |
+|---|---|---|
+| Tangent-1 length | `R_t1 = AGL / 2` (= 25 m at AGL 50) | Straight from anchor (last survey WP) heading `tan_B`, before arc entry |
+| Arc radius | `R_arc = AGL` (= 50 m at AGL 50) | Constant. NOT a log spiral — see lesson #39e |
+| Arc sweep | 270° clockwise (= 3π/2 rad CW) | Heading rotates `tan_B → perp_right → −tan_B → perp_left` |
+| Arc center | `tangent_1_end + R_arc · perp_right_B` | = local frame `(R_t1, R_arc)` |
+| Arc end | `anchor + (R_t1 + R_arc) · tan_B + R_arc · perp_right_B` | = local `(R_t1 + R_arc, R_arc)`, perp from centerline = `+1.5·AGL` (corridor right edge) |
+| Arc end heading | `perp_left of tan_B` | Perpendicular to highway centerline; sets up the perpendicular transect |
+| Arc sample count | 8 intermediate + 1 endpoint = 9 WPs | Matches figure-8 density |
+| Perpendicular transect length | `corridor_width + 50 m margin` (= 200 m at AGL 50) | Straight line from arc end in `perp_left` direction; crosses corridor cleanly, exits left edge + 50 m past for LiDAR FOV margin |
+
+The closing arc + perpendicular transect REPLACES the older "loop + separate closing transect from anchor" pattern. There is no anchor-revisit waypoint and no separate closing transect — the arc end IS the transect start.
+
+### DEM-based terrain refinement (v7, 2026-06-29)
+
+Applied to survey + closing block (tangent-1 + arc + perpendicular transect). NOT applied to figure-8 or kinematic line. See SKILL.md §39f for the algorithm.
+
+| Property | Value | Notes |
+|---|---|---|
+| `TERRAIN_TOL_M` | 10 m | Max \|deviation\| between drone's flight-path AMSL and (terrain_amsl + AGL). Drone flies inside AGL_target ± TERRAIN_TOL_M along every refined segment. |
+| `TERRAIN_SAMPLE_M` | 5 m | DEM sampling step along a segment when computing deviation. |
+| `TERRAIN_MIN_SEG_M` | 5 m | Don't split segments shorter than this (converged). |
+| Min spacing floor | 30 m | Preferred minimum spacing between consecutive WPs. |
+| Spacing floor mode | `override` | When a tight spacing is needed to stay within tolerance, insert anyway and log. Alternative `skip` mode is safer but leaves AGL drift. |
+
+Reference: `scripts/generate_all_fergus50_plans.py::terrain_refine_polyline`.
+
+### Rally point (v7.1, 2026-07-03)
+
+Every generated .plan gets a rally point near its last nav waypoint. See SKILL.md §39h.
+
+| Property | Value | Notes |
+|---|---|---|
+| Offset east of last WP | 37.3 m | Matches Ryan's 8BA modification |
+| Offset north of last WP | 45.4 m | ~58.8 m total NE offset |
+| Rally altitude | 45.72 m | QGC default = 150 ft AGL |
+| `version` | 2 | KML/plan schema |
 
 ### Flight-time estimation model
 
