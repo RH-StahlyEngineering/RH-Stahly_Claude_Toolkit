@@ -1,6 +1,6 @@
 ---
 name: pm
-description: Use when starting, resuming, or ending the DroneMapper coordinator (PM) session — /pm or /pm open after a clear, compaction, or new terminal; /pm closeout before ending a session or handing off. Also use whenever the coordinator cannot answer "who holds what right now" from memory, or before claiming any session, worktree, or launch state to RH.
+description: Use when starting, resuming, or ending the DroneMapper coordinator (PM) session — /pm or /pm open after a clear, compaction, or new terminal; /pm close before ending a session or handing off. Also use whenever the coordinator cannot answer "who holds what right now" from memory, or before claiming any session, worktree, or launch state to RH.
 ---
 
 # PM — prime the coordinator
@@ -49,7 +49,7 @@ allocated, a promise made, a merge landed. A ledger updated "later" is a diary,
 not an instrument. Compaction can strike at any turn; the ledger is what makes
 that survivable.
 
-## Modes — `/pm` (or `/pm open`) vs `/pm closeout`
+## Modes — `/pm` (or `/pm open`) vs `/pm close`
 
 **`/pm` / `/pm open`** — the four reads above, then reconcile, then **invoke
 `coordinating-parallel-sessions`** (Skill tool) before briefing, redirecting, or
@@ -60,7 +60,7 @@ session of redirects before the method skill was loaded, and RH had to invoke it
 himself). Its `references/this-setup.md` is also the pre-brief read for machine
 reach and traps. Default mode.
 
-**`/pm closeout`** — run before this coordinator session ends, hands off, or goes
+**`/pm close`** — run before this coordinator session ends, hands off, or goes
 quiet for the night. In order:
 
 1. **Promises audit.** Walk the ledger's PROMISES: each is done (check it off with
@@ -76,17 +76,59 @@ quiet for the night. In order:
 4. **Sheet refresh** via the `open-items` skill if any RH-facing line moved.
 5. **Lessons buffer** — if it has grown past a handful of entries, commit the batch
    to `tasks/lessons.md` now rather than promising to; a buffer that survives two
-   closeouts is a promise being broken slowly.
-6. **One closing message to RH**: what's running unattended overnight (and who
+   closes is a promise being broken slowly.
+6. **Issue sweep.** Walk the day's ledger addenda for code defects that were
+   found, worked around, or recorded-not-fixed — worker review findings flagged
+   "yours, not mine", operational gaps hit in production (a requeue that can't
+   re-run, a stale field an operator would believe), holes recorded in a merge's
+   handoff. Each becomes a GitHub issue NOW, while the evidence is fresh: the
+   observed behavior with its date and job/commit, the mechanism, the sizing if
+   measured, and remedy language as "ideas deferring to the developer" (per
+   CLAUDE.md's findings rule). Milestone each to its arc from the arcs index
+   (#326); a finding on an existing issue's surface becomes a comment there, not
+   a duplicate. Record in the ledger what was deliberately NOT filed and why
+   (fleet-process lessons belong in `tasks/lessons.md`, not the tracker;
+   unproven associations are premature). A defect that lives only in a ledger
+   addendum is a defect the next builder re-discovers at full price — observed
+   2026-09-08: five real defects (stale lease, requeue-cannot-rerun, context
+   never serialised, a diagnostic contradicting the pipeline, a matcher hole)
+   sat in addenda until RH asked; the ask should not be needed.
+7. **One closing message to RH**: what's running unattended overnight (and who
    watches it), the first thing tomorrow's session should do, and the single
    sentence a fresh coordinator needs that the files can't carry. Keep it short —
    the files are the record; the message is the pointer.
 
-Closeout does NOT delete anything, close terminals, or message workers "goodbye" —
-sessions keep running; closeout is about the LEDGER being safe to resume from.
+Close does NOT delete anything, close terminals, or message workers "goodbye" —
+sessions keep running; close is about the LEDGER being safe to resume from.
 
 ## Rules
 
+- **Write to RH in plain English, and keep it short** (RH instruction
+  2026-09-01: "stop speaking claudeish"). No internal codenames, no dramatic
+  phrasing ("gated on one word", "the sentence the files can't carry"), no
+  metaphor. Say what happened, what's next, what you need — in the fewest
+  ordinary sentences that carry it. The open-items list stays complete;
+  everything around it gets cut. AND: every question to RH carries enough
+  context to answer COLD — what the thing is, why it's being asked, what
+  the answer feeds — never assuming he remembers a prior message or knows
+  an internal name (RH correction 2026-09-02: "I'm not sure what you're
+  asking because you don't give me a lot of detail, you just assume I know
+  what you're talking about all the time").
+
+- **Drive the fleet; idle sessions do no work** (RH correction 2026-09-01:
+  two builders sat idle for an hour after saying "proceeding to
+  writing-plans", while the coordinator told RH work was happening — "that's
+  your fault. you're responsible for the checklist getting completed").
+  A session's turn ENDS when its message to you ends; "proceeding to X" is
+  an intention, not a process. So: (1) a work order carries an explicit
+  continuous-execution instruction — run spec→plan→build without stopping
+  between phases, only the SDD stop conditions stop you; (2) send with
+  notify_when_idle so the next stall reaches you, and treat an idle notice
+  from a session with open work as a stall to kick, not a completion;
+  (3) before telling RH a session is working, check ListAgents — idle+open
+  work means it is NOT working; (4) the coordinator owns the deadline, not
+  just the routing — a stalled fleet is the coordinator's failure before it
+  is any worker's.
 - **Delegate depth to subagents, liberally** (RH instruction 2026-08-28 — the
   observed failure was the coordinator grepping a codebase itself mid-session).
   The coordinator's context is the fleet's only shared map; every file read and
@@ -107,6 +149,17 @@ sessions keep running; closeout is about the LEDGER being safe to resume from.
 - On resume, the ledger outranks your memory and the sheet outranks the ledger
   where they disagree about RH's rulings; `origin/master` outranks both about code.
 - Replaces the retired `prime-agent-os` command (agent-os framework is retired).
+
+## Context watch — RETIRED (BROKEN, do not use)
+
+A context-monitor script (`scripts/context-watch.py`) shipped 2026-09-02 and
+was retired the same hour: its readings were wrong in production (claimed a
+session at 79% that RH measured at 18%; also emitted a 219% reading). The
+window-inference and usage-summing heuristics are not trustworthy. Do NOT
+launch it, do NOT read CONTEXT-WARNINGS.md as truth (RH instruction
+2026-09-02: "skill is failing... stop relying on this skill immediately").
+Compaction defense remains what worked: standing anchor discipline (workers
+keep their SDD ledger + resume block current) and RH's own warnings.
 
 ## Ledger template
 
