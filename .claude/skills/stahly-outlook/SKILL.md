@@ -233,6 +233,29 @@ Trigger: "give me an inbox snapshot" or via `/schedule` cron.
 4. Expiring quotes / renewal deadlines in next 14 days (search body for "expire", "renewal", "due by").
 5. Write markdown to `~/Desktop/inbox-snapshot-YYYY-MM-DD.md`.
 
+## Workflow: out-of-office dates in signature
+
+Trigger: "add my out-of-office dates to my signature", "I'm out 11/3-11/7, update my signature", "remove the OOO line".
+
+RH's established style (verified from sent mail, last used 9/23-9/28 trip): one **bold red Arial 9pt** line placed directly **below the signature table**, exact wording:
+
+`Upcoming dates I'm out of office: 9/23-9/28`
+
+- Dates: `M/D-M/D`, no leading zeros, no year, hyphen with no spaces. Several ranges/days → comma-separated (`11/3-11/7, 11/14`). End date unknown → `10/19-TBD`.
+- Apply to **both active signatures**: `Great Falls Project Surveyor` and `Remote Sensing Lead 2024`. Skip `2023-11-06` (old, has the PO box / old phone number).
+- Signature files: `%APPDATA%\Microsoft\Signatures\*.htm`.
+
+Steps:
+1. Back up the `.htm` first → `<name>.htm.bak-YYYYMMDD`.
+2. If an `Upcoming dates I'm out of office:` line exists, replace its dates in place. Otherwise insert right after the signature's closing `</table>`. This file's HTML uses inline styles, so insert:
+   ```html
+   <p style="margin: 0in;"><b><span style="font-family: Arial, sans-serif; font-size: 9pt; color: red;">Upcoming dates I'm out of office: 11/3-11/7</span></b></p>
+   ```
+   (In older Word-style signature HTML it shows up as `<p class=MsoNormal><b><span style='font-size:9.0pt;font-family:"Arial",sans-serif;color:red'>…</span></b></p>`. Same look.)
+3. Edit with a Python script that reads/writes the file using its **detected encoding** (check for a BOM / `charset=` meta). Don't add a BOM, and don't touch the embedded base64 logo `<img>`.
+4. Removing it after the trip: delete the whole `<p>` for that line. Don't leave an empty red paragraph.
+5. Tell RH to restart Outlook (or reselect the signature) so new emails pick up the change. Emails already open don't change. Leave the `.rtf` / `.txt` versions alone unless asked.
+
 ## Subagent patterns
 
 Dispatch a subagent when:
