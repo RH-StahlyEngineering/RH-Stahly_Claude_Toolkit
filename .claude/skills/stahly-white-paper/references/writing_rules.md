@@ -17,7 +17,7 @@ Distilled from `C:\Users\rharbach\research\internal-white-paper-effectiveness.md
 - **Checklists** for critical, skippable, or order-sensitive items: killer items only, ~5–9 per pause point, checkbox per item, order matching the physical workflow.
 - **Place-keeping** for procedures > 10 steps: checkboxes and step numbers.
 - **Credible why**: state the reason behind each non-obvious rule; readers comply with rules they believe.
-- **Document control**: owner, version, date, review cycle, feedback channel.
+- **Document control**: Author (RH wants "Author", not "Owner"), version, date, review cycle, feedback channel.
 
 ## Delightful
 - Conversational "you"/"we" voice; confident, plain.
