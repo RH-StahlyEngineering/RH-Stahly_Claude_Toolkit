@@ -1,6 +1,6 @@
 ---
 name: utility-locate
-description: Request Montana 811 utility locates for a Stahly survey project. Draft the ticket description from the project's survey-limits exhibit, check it with a blind-locator test, fill the ticket in ITIC (mt.itic.occinc.com), and file the responses. Use this whenever RH mentions 811, one-call, locates, a locate ticket, a design or engineering locate, ITIC or iSite, "call in locates", marking utilities before a survey, or utility marks for a topo. Use it even when RH only says "step 1 is locates" or "get the utilities marked". For archiving locate response emails, also use stahly-outlook.
+description: Montana 811 utility locates for Stahly survey jobs. Covers writing the ticket description from the survey-limits exhibit, the blind-locator test, entering the ticket in ITIC, and filing the responses.
 ---
 
 # Utility locate (Montana 811 / ITIC)
@@ -12,7 +12,7 @@ The deliverable is a locate ticket that a utility locator can mark correctly wit
 Find these before starting. Ask RH only for what you can't find.
 - **Survey-limits exhibit.** Usually `Documents\Survey\_AI\Exhibit_A_Survey_Limits.png`, or the exhibit in the proposal or SOW. It is the source of truth for the area. First decide what kind of exhibit it is:
   - **Area outline** (a closed limit around a topo or design area): treat it as a generous limit. Marking extra area is fine, missing area is not.
-  - **Lines to stake or survey** (ROW lines, a boundary, an alignment): the locate area is the strip those lines bound or follow, for example the ROW itself. Add only a small margin at the ends, about 10 ft. Don't add yard buffers or whole intersections; they double the area and drown the locator in marks they don't need.
+  - **Lines to stake or survey** (ROW lines, a boundary, an alignment): the locate area is the strip those lines bound or follow, for example the ROW itself. Keep it tight: the strip plus about 10 ft at each end and beside each line.
 - **Scope of work.** Says what the survey covers: streets, frontages, buildings. Look in the project `_AI\STATE.md` or the proposal folder.
 - **Project folder.** Locate responses go to `<project>\Survey_GIS_Data\4-Utility_Locates\`.
 - **RH's contact.** Ryan Harbach, Stahly Engineering, 406-604-4647.
@@ -22,7 +22,7 @@ Find these before starting. Ask RH only for what you can't find.
 Write the description from the exhibit, not from the text ITIC generates for each parcel. ITIC's per-parcel lines ("MARK ENTIRE PROPERTY…") are a formality. Leave them at the top of each ticket and put the real description after them.
 
 How to write it:
-- **Flat facts in ALL CAPS, no conversation.** No "please", no "you", no explanations. A locator wants to know what to mark and where.
+- **Flat facts in ALL CAPS:** what to mark and where, nothing more.
 - **Write it so the map isn't needed.** Assume the attachment never arrives, but still say "MAP ATTACHED (EXHIBIT A)" once.
 - **Anchor to things visible on site or on an aerial:** named streets, intersections, back of walk, front walls of buildings, parking lots, alleys, and "first avenue east of 5th Ave S". House numbers and lot lines are invisible to a locator with an aerial. Use them only next to a visible anchor.
 - **Give distances where an edge isn't a visible feature,** for example "ABOUT 100 FT DEEP" or "ABOUT 20 FT PAST SOUTH BACK OF WALK".
@@ -47,7 +47,8 @@ Run this after every edit. RH expects it, and it reliably catches descriptions t
    - Check `ref_on_aerial.png` by eye before trusting it.
 3. Spawn a general-purpose subagent with **only** the ticket text and the aerial path. Use `references/blind_test_prompt.md`. It must save `area.json`, a single polygon in pixels.
 4. Score it: `python scripts/accept.py ref_poly.json area.json --aerial aerial.png`.
-   - **Pass: overlap (IoU) ≥ 0.85 and little red-line area missed.** Extra area outside the red line is fine.
+   - **Area outline passes** at overlap (IoU) ≥ 0.85 with ≤ 5% missed. The script's PASS/FAIL uses this rule.
+   - **Strip (lines to stake) passes** at ≤ 5% missed with ≤ 50% extra. On a narrow strip even a small margin drags overlap down, so ignore the overlap number there.
    - Look at the overlay PNG too. "Accepted" means it looks like the exhibit, not only that the numbers pass.
 5. If it fails, look at where the outlines differ and fix those edges with a visible anchor or a distance. Re-test. Don't stop until it passes.
 
@@ -60,7 +61,7 @@ Use the app's built-in browser, not Chrome, because ITIC sessions are tied to a 
 - Go to My Tickets → Create job ticket → **Engineering ticket** (survey and design, no excavation).
 - **Map.** Search the address, then zoom in until the excavation tools appear.
   - Use the **Property (Parcel)** tool: tap parcels, check "Entire property". "Road right of way" activates after that, so set its dropdown to "Both road rights of way of the dig street".
-  - Use Street/Route tools as needed. **Never use "Other".** Locators hate it, and ITIC warns against it.
+  - Build the area only from the Parcel, Street and Route tools. Locators hate the "Other" freehand polygon.
   - The map drives which members get notified, so cover the area generously. Detail goes in the text.
 - ITIC may split the job into several tickets. Accept the split.
 - **Step 2 (Write instructions).**
@@ -80,10 +81,3 @@ Use the app's built-in browser, not Chrome, because ITIC sessions are tied to a 
 
 - Update the project `_AI\STATE.md`: ticket count, status, start date, members notified, and that the description passed the blind test (with its score).
 - Ticket numbers arrive by email. Archive the positive responses to `Survey_GIS_Data\4-Utility_Locates\`, with the ticket number in the file name, using the stahly-outlook skill.
-
-## Things RH won't want
-- A description built up from ITIC's parcel text.
-- Using "Other".
-- Wording that talks at the locator.
-- Long lists.
-- Reporting "accepted" when the drawing doesn't look like the exhibit.
