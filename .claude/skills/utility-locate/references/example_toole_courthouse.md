@@ -1,0 +1,33 @@
+# Passed example: Toole County Courthouse, Shelby (2071-07D26, Nov 2026)
+
+ITIC split it into 5 tickets. Round 7 of the blind test passed (IoU 0.90, missed 2.6%).
+Earlier rounds failed for these reasons. Each is a lesson:
+- **Built from ITIC parcel text.** The result was patchy, and a locator couldn't tell which avenue was 4th.
+- **"Whole block + 4 streets".** It ignored the exhibit's excluded SW corner (IoU 0.73).
+- **"North back of walk".** Locators guess walk widths differently. Fixed by anchoring to "front walls of the buildings across the street".
+- **Lot addresses (310, 323…).** Invisible on an aerial. Fixed by "2 house lots next to the courthouse west parking lot (about 70 ft wide together)".
+- **8 numbered items.** Too many. 4 grouped items scored better.
+
+Final text (one ticket):
+
+```
+TICKET 3 OF 5. ALL 5 TICKETS COVER ONE AREA. MARK THE FULL AREA BELOW ON EVERY TICKET.
+MAP ATTACHED (EXHIBIT A).
+
+AREA: TOOLE COUNTY COURTHOUSE BLOCK (226 1ST ST S, SHELBY) AND THE STREETS AROUND IT. THE BLOCK IS BOUNDED BY 1ST ST S (NORTH), MAPLE AVE / 2ND AVE S (EAST), 2ND ST S (SOUTH) AND 4TH AVE S (WEST). 4TH AVE S IS THE FIRST AVENUE EAST OF 5TH AVE S.
+
+MARK:
+1. THE WHOLE BLOCK EXCEPT ITS SOUTHWEST CORNER: COURTHOUSE AND LIBRARY GROUNDS (EAST HALF), THE ROW OF HOUSE LOTS FACING 1ST ST S (WEST HALF, ABOUT 100 FT DEEP), AND THE ALLEY BEHIND THOSE HOUSES. SOUTH OF THE ALLEY, MARK ONLY THE 2 HOUSE LOTS NEXT TO THE COURTHOUSE WEST PARKING LOT (ABOUT 70 FT WIDE TOGETHER). DO NOT MARK THE REMAINING HOUSES TOWARD 4TH AVE S / 2ND ST S.
+2. 1ST ST S AND MAPLE AVE: FULL WIDTH, BOTH SIDEWALKS, UP TO THE FRONT WALLS OF THE BUILDINGS ACROSS THE STREET. BOTH 1ST ST S INTERSECTIONS AND THE MAPLE / 2ND ST S INTERSECTION INCLUDED.
+3. 2ND ST S: FULL WIDTH, BOTH SIDEWALKS, AND ABOUT 20 FT PAST THE SOUTH BACK OF WALK, FROM MAPLE AVE WEST TO THE WEST LINE OF THE 2 HOUSE LOTS IN ITEM 1.
+4. 4TH AVE S: FULL WIDTH, BOTH SIDEWALKS, FROM 1ST ST S SOUTH TO THE ALLEY ONLY.
+
+INCLUDE SERVICE LINES TO EVERY BUILDING IN THE AREA. FOR BUILDINGS OUTSIDE THE AREA, MARK SERVICES UP TO THE AREA LIMIT ONLY.
+
+CITY OF SHELBY: WATER, SANITARY SEWER AND STORM SEWER IN ALL STREETS AND THE ALLEY ABOVE - MAINS, SERVICES, VALVES, MANHOLES, STORM INLETS.
+
+SURVEY FOR DESIGN. NO EXCAVATION.
+CONTACT: RYAN HARBACH, STAHLY ENGINEERING, 406-604-4647.
+```
+
+Type of work: PRE-SURVEY TO DESIGN IMPROVEMENTS. Members notified: 3 Rivers Communications, Marias River Electric, Northern Telephone, CenturyLink, Shelby Gas, City of Shelby.
