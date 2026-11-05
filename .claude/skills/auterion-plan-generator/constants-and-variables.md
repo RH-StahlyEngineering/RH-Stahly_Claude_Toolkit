@@ -32,7 +32,7 @@ These are baked into the generator and the user has confirmed they should not ch
 | `TerrainAdjustTolerance` | (preserve) | Leave whatever AMC wrote |
 | `CameraTriggerInTurnAround` | `false` | |
 | `HoverAndCapture` | `false` | |
-| `Refly90Degrees` | `false` | |
+| `Refly90Degrees` | `false` | `true` only for a criss-cross survey that one plan covers (see SKILL.md *Criss-cross*); then omit the cross-line |
 | `splitConcavePolygons` | `false` | |
 | `flyAlternateTransects` | `false` | |
 | `CameraCalc.CameraName` | `"Manual (no camera specs)"` | Sidesteps sensor/focal/image-size question |
@@ -41,7 +41,7 @@ These are baked into the generator and the user has confirmed they should not ch
 **Note (2026-06-18):** AGL (`CameraCalc.DistanceToSurface`) and the duration window
 were previously listed as constants but proved to be **per-mission variables** in
 practice — Ryan flew the Fergus corridor at AGL 70 with a 12-min cap, not the
-original 40 / 10-min. Treat AGL and duration cap as variables; default to 40 / 10
+original 40 / 10-min. Treat AGL and duration cap as variables; default to 40 m AGL and a **15-min** cap (RH 2026-10-06; was 10)
 for new missions until the user specifies otherwise.
 
 ### Required AMC fields on every SimpleItem
@@ -166,7 +166,7 @@ Ask the user for these. Don't default them silently.
 | `HOME` | `[lat, lon]` | — | First & last waypoint of the mission. User-defined per mission. |
 | `polygon` | list of `[lat, lon]` pairs | 4–20 verts | Survey boundary. From KML or hand-drawn. |
 | `AGL_TARGET` | float (meters) | **40 (RGB)** or **70 (LiDAR)** | Above-terrain altitude — also drives camera footprint AND line spacing per skill convention |
-| `DURATION_MIN` / `DURATION_MAX` | float (min) | **[8, 10]** default; user can relax to [8, 12] | Acceptable mission duration window per estimate_flight_time.py |
+| `DURATION_MIN` / `DURATION_MAX` | float (min) | **max 15** (RH 2026-10-06; earlier projects used [8, 10] / [8, 12]) | Acceptable mission duration window per estimate_flight_time.py |
 | `--gap-thresholds` | comma-separated m² | empty or "8000,2000,500" | Successive gap-fill cutoffs for the orchestrator. Each smaller threshold adds more (smaller) tiles. Skip to keep only main spine tiles. |
 | `--prefix` (output naming) | str | "fergus" | Output plans are `<prefix>_NNN.plan` (main) and `<prefix>_gap_NNN.plan` (gap-fills). Cleanup only touches files matching this prefix. |
 | `--east-to-west` | flag | false (= W→E) | Numbering order for output files. Set true when operator flies east → west. |

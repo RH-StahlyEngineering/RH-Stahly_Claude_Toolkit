@@ -84,7 +84,8 @@ def build_mission(base_plan_path: str, out_path: str, *,
                   cross_margin: float = 25.0,
                   polygon=None,
                   figure8_duration: float = 15.0,
-                  cross_axis: str = 'auto'):
+                  cross_axis: str = 'auto',
+                  criss_cross: bool = False):
     """Build a canonical LiDAR mission .plan.
 
     Args:
@@ -100,6 +101,9 @@ def build_mission(base_plan_path: str, out_path: str, *,
                  If None, the base file's polygon is preserved.
         figure8_duration: target flight time per figure-8, seconds
         cross_axis: 'auto' (perpendicular to survey angle), 'ns', or 'ew'
+        criss_cross: True -> Refly90Degrees on (second grid at angle+90) and NO
+                     cross-line: the perpendicular grid is the INS cross-tie
+                     (RH 2026-10-06). Fig-8 #2 is centred at the survey exit.
 
     Returns: dict with summary stats.
     """
@@ -118,6 +122,7 @@ def build_mission(base_plan_path: str, out_path: str, *,
     ts['FlightSpeed'] = speed
     ts['TerrainAdjustMaxClimbRate'] = TERRAIN_CLIMB_RATE
     ts['TerrainAdjustMaxDescentRate'] = TERRAIN_DESCENT_RATE
+    ts['Refly90Degrees'] = bool(criss_cross)
     m['globalPlanAltitudeMode'] = GLOBAL_ALT_MODE
 
     # Override polygon if requested
@@ -227,10 +232,19 @@ def build_mission(base_plan_path: str, out_path: str, *,
         cross_end   = _make_wp(cs_lat, cs_lon, terrain_amsl(cs_lat, cs_lon) + agl_target)
         fig8_b_center = (cs_lat, cs_lon)
 
-    if using_fallback:
+    if using_fallback and not criss_cross:
         print(f"  [info] no inner survey Items yet — used HOME-nearest-edge fallback "
               f"for cross-line position (one AGL inset along flight direction).",
               file=sys.stderr)
+
+    if criss_cross:
+        # No cross-line: fig-8 #2 at the survey exit (last inner WP), or the polygon
+        # vertex nearest HOME when AMC has not generated Items yet.
+        if inner_wps:
+            fig8_b_center = (inner_wps[-1]['params'][4], inner_wps[-1]['params'][5])
+        else:
+            fig8_b_center = tuple(min(poly, key=lambda p: math.hypot(*(
+                a - b for a, b in zip(_to_local(*p), _to_local(home_lat, home_lon))))))
 
     fig8_b = fig8_waypoints(fig8_b_center[0], fig8_b_center[1], 0,
                             speed=speed, duration=figure8_duration)
@@ -246,7 +260,7 @@ def build_mission(base_plan_path: str, out_path: str, *,
 
     new_items = ([header_530, speed_set, climb_wp]
                  + fig8_a
-                 + [survey, cross_start, cross_end]
+                 + ([survey] if criss_cross else [survey, cross_start, cross_end])
                  + fig8_b
                  + [exit_wp])
 
@@ -290,6 +304,8 @@ def main():
     ap.add_argument('--fig8-duration', type=float, default=15.0,
                     help='Figure-8 flight time seconds (default 15)')
     ap.add_argument('--cross-axis', choices=['auto', 'ns', 'ew'], default='auto')
+    ap.add_argument('--criss-cross', action='store_true',
+                    help='Refly90Degrees on, cross-line omitted (perpendicular grid is the cross-tie)')
     args = ap.parse_args()
 
     stats = build_mission(args.base, args.out,
@@ -298,17 +314,20 @@ def main():
                           speed=args.speed,
                           cross_margin=args.cross_margin,
                           figure8_duration=args.fig8_duration,
-                          cross_axis=args.cross_axis)
+                          cross_axis=args.cross_axis,
+                          criss_cross=args.criss_cross)
 
     print(f"\nWrote {args.out}")
-    print(f"  items: {stats['items']} (expected 29)")
+    print(f"  items: {stats['items']} (expected {27 if args.criss_cross else 29})")
     print(f"  speed changes: {stats['speed_changes']} (expected 1)")
     print(f"  waypoints: {stats['waypoints']}")
     print(f"  AMSL range: {stats['amsl_range'][0]:.2f} -> {stats['amsl_range'][1]:.2f} m"
           f"  (spread {stats['amsl_range'][1]-stats['amsl_range'][0]:.2f} m)")
     print(f"  first WP == last WP: {stats['first_eq_last']}")
-    print(f"  cross-line axis: {stats['cross_axis']}")
+    print("  cross-line: omitted (criss-cross)" if args.criss_cross
+          else f"  cross-line bearing: {stats['cross_bearing_deg']:.1f} deg")
     print("\nNext: open in desktop AMC to regenerate survey transects, save, then push to controller.")
+    print("Then: python photo_overlap.py <plan> for the photogrammetry overlap report.")
 
 
 if __name__ == '__main__':

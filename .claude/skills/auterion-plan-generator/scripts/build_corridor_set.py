@@ -67,7 +67,7 @@ def main():
     ap.add_argument('--perp', type=float, default=158.0)
     ap.add_argument('--target-amc', type=float, default=9.5)
     ap.add_argument('--duration-min', type=float, default=8.0)
-    ap.add_argument('--duration-max', type=float, default=10.0)
+    ap.add_argument('--duration-max', type=float, default=15.0)  # RH 2026-10-06: 15-min limit
     ap.add_argument('--gap-thresholds', default='',
                     help='Comma-separated m² thresholds for successive gap-fill passes (e.g. "8000,2000,500"). Empty = skip gap-fill.')
     ap.add_argument('--simplify-tolerance', type=float, default=10.0,

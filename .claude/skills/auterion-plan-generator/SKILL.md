@@ -18,9 +18,16 @@ This skill encapsulates everything learned about building, modifying, and valida
 - "Tweak the cross-line / trailing leg / home position in this plan"
 - "Why is my mission flying at MSL instead of terrain-following?"
 
+## Standing rules (current — override older lessons below)
+
+- **Per-flight time limit: 15 min** (RH 2026-10-06; was 10). Check every plan's estimated duration against 15 min. Lessons below that cite a 10-min battery are historical records of those projects. Plans RH accepted before this change are exempt even if they violate it.
+- **Criss-cross surveys drop the cross-line** (RH 2026-10-06). The perpendicular grid ties the lines for the LiDAR INS. See *Criss-cross (double-grid) surveys*. Plans RH already built with a cross-line keep it.
+- **Line angle follows the dominant power line** when one crosses or borders the site (RH 2026-10-06). Lines parallel to the wires give the best wire returns. Use the length-weighted bearing of power-line segments within ~200 m of the survey polygon (OSM `power=line|minor_line`, or the client's line KML). Otherwise, use the polygon's long axis.
+- **Every generated plan gets a photo-overlap report** from `scripts/photo_overlap.py` (see *Photogrammetry overlap*).
+
 ## Canonical LiDAR mission structure
 
-Every LiDAR mission is assembled from the same building blocks. Speed never changes mid-mission. **What varies between missions is whether the figure-8 calibrations are present, and that depends on where the flight sits in a power-cycle envelope** (see *Session model* below). The survey + cross-line are mandatory on every flight; the figure-8s are conditional.
+Every LiDAR mission is assembled from the same building blocks. Speed never changes mid-mission. **What varies between missions is whether the figure-8 calibrations are present, and that depends on where the flight sits in a power-cycle envelope** (see *Session model* below). The survey is mandatory on every flight. The cross-line is mandatory on every single-grid flight and omitted on criss-cross flights. The figure-8s are conditional.
 
 Building blocks, in order:
 
@@ -37,7 +44,10 @@ E. Cross-line              2 waypoints — perpendicular to flight lines,
                            EXTENDED past polygon edges by CROSS_MARGIN each side
                            (Reading A: offset measured from the exit waypoint
                            coordinate, not from a polygon edge or swath edge)
-                           — MANDATORY on every flight
+                           — MANDATORY on every single-grid flight; OMITTED when
+                             the survey is criss-cross (Refly90Degrees=true or a
+                             separate perpendicular-grid flight) — the 90° grid is
+                             the cross-tie. Fig-8 #2 then centres on the survey exit.
                            — Purpose: transect the survey JUST COMPLETED in this
                              flight at a perpendicular angle, giving the LiDAR INS
                              a perpendicular ground-track to tie the parallel
@@ -126,7 +136,9 @@ Group the questions into phases. Use `AskUserQuestion` when you have 2–4 relat
 
 4. **AGL_TARGET** (meters above terrain) — default **40**. Sets both flight altitude AND line spacing AND swath/2 (FOV 90° convention).
 5. **SPEED** (m/s, constant throughout mission) — default **8**.
-6. **Flight-line direction?** Auto (perpendicular to polygon long axis), or specify angle in degrees. AMC convention: 270 = E-W lines, 0 = N-S lines.
+6. **Flight-line direction?** Default: parallel to the dominant power line if one is on or near the site (see *Standing rules*); otherwise along the polygon's long axis. The user can also give an angle in degrees. AMC convention: 270 = E-W lines, 0 = N-S lines.
+6a. **Criss-cross (second grid at +90°)?** Default no. Ask when the user wants photogrammetry alongside the lidar. See *Criss-cross (double-grid) surveys* for how to lay it out and what it costs.
+6b. **Camera trigger** (photogrammetry only): the A6K-Lite fires on the Phoenix Rover timer, set in SpatialExplorer (Acquisition > Camera Triggering). Phoenix docs say a photo every **2 s**; RH runs 1 or 2 s, so ask which. It is **never** fired by AMC/PX4: ignore the cmd-206 trigger-distance items AMC writes from `AdjustedFootprintFrontal` (RH 2026-10-06). The mount is fixed: long side across-track (RH confirmed).
 
 **Phase 3 — Calibration parameters (defaults usually fine)**
 
@@ -149,11 +161,13 @@ Group the questions into phases. Use `AskUserQuestion` when you have 2–4 relat
 #### After Q&A
 
 1. **Run the generator** — see [scripts/generate_lidar_mission.py](scripts/generate_lidar_mission.py). It handles geometry, figure-8 placement, cross-line placement (Reading A or HOME-nearest-edge fallback), and DEM-baking via USGS 3DEP. Pass session-position flags so it includes/skips the right calibrations.
-2. **Verify counts match the expected variant.** Look up the count from the variant table above based on session position: 29 (single), 18 (first OR last of session), or 7 (middle). Exactly **one** `cmd 178`. First waypoint == last waypoint == HOME. Survey + cross-line present on every variant.
+2. **Verify counts match the expected variant.** Look up the count from the variant table above based on session position: 29 (single), 18 (first OR last of session), or 7 (middle). Exactly **one** `cmd 178`. First waypoint == last waypoint == HOME. Survey present on every variant. Cross-line present unless criss-cross, which has 2 fewer items per variant.
 3. **Verify session bracketing is correct for the group.** If generating multiple plans for a hot-swap session, confirm: exactly one plan has START cal, exactly one has END cal, both reside in the same envelope, and they share/neighbor HOMEs so the operator can land-swap-launch without moving.
 4. **Run coverage check.** If a KML target was provided in phase 1, run [scripts/coverage_check.py](scripts/coverage_check.py) against it to confirm 100% coverage before declaring done. For multi-plan operations (corridor tiling, gap fills), use [scripts/coverage_check_multi.py](scripts/coverage_check_multi.py) — it unions per-plan ground swaths (CorridorScan envelope = `CorridorWidth/2 + AGL/2` perpendicular each side, plus turnaround caps) and intersects with the target KML. Optionally emits a KML of uncovered polygons for visual gap inspection.
 5. **Run VLOS (Visual Line of Sight) check.** Use [scripts/los_check.py](scripts/los_check.py) on every plan. It samples the drone's full flight path (standalone waypoints + CorridorScan inner Items) at 25 m, shoots a 100-sample 3D line from operator eye (launch ground + 2 m) to drone (AMSL at AGL), and flags any sample where terrain rises above the LOS line. Output: `% VLOS`, worst block height, distance from launch where worst block occurs. Bare-earth DEM only — does not model trees/buildings. If a plan fails, use [scripts/scout_vlos_alternatives.py](scripts/scout_vlos_alternatives.py) to find the closest VLOS-clean alternative launch position within a configurable radius.
 6. **Tell the user to open in AMC once.** AMC will regenerate survey transects + camera commands (Behavior A — see [known-pitfalls.md](known-pitfalls.md#1-terrain-recomputation-is-survey-only)). Save from AMC, then push to controller.
+7. **Run the photo-overlap report on every plan, plus all of a site's plans together:** `python scripts/photo_overlap.py <plans...> [--dem-meta <site DEM>] [--ground-offset <C_site>]`. Run it on the AMC-saved files when you have them, because AMC rewrites the Items. Report forward and side overlap (median and minimum), images per ground cell, the % of the area seen from 2 or more directions, GSD and blur, at the Rover interval (2 s default; run 1 s too if RH hasn't said which). See *Photogrammetry overlap*.
+8. **Check duration ≤ 15 min** per flight (*Standing rules*).
 
 ### Modifying an existing plan
 
@@ -189,11 +203,52 @@ AMC_min ≈ 1.05·survey_min + 1.08·corridor_min + 1.97·transit_min
 
 The transit ×1.97 multiplier captures climb/decel that the naive Σ(d/v) misses.
 
+### Criss-cross (double-grid) surveys
+
+A second grid at +90° to the first. It's used when one flight is collecting lidar and photogrammetry together. Each grid's side overlap stays at the single-grid value; the second grid adds images per point and a second viewing direction. **It does not satisfy per-grid overlap specs:** Pix4D's double-grid guidance keeps the general 75/60 per grid, and ASPRS Add. III asks 65–75% side for SfM. At the lidar spacing (spacing = AGL, about 32% side at 50 m) each grid meets only lidar colorization (ASPRS Add. V A.5.5, "less strict" sidelap) or the manned-era floors. If the deliverable is an orthophoto or a stand-alone SfM model, the plan needs a tighter spacing. Otherwise, RH has to accept a multiplicity-based argument (≥6 images per cell over ~97% of the site), and the report must say so. Decide with `photo_overlap.py --use`.
+
+- **AMC's `Refly90Degrees: true` re-flies each plan's OWN polygon at +90°.** On narrow tiles that's very inefficient: the cross lines are only as long as the tile is wide, so the drone turns around every ~150 m. On the McDonald tiles (2026-10-06, 100–150 m wide) the survey distance went from 1.1–1.5 km to 3.3–4.5 km per flight, about 3× instead of 2×.
+- **Preferred layout for multi-flight sites:** fly the 90° grid across the whole site as its own set of flights, tiled along the other axis. That keeps the cross lines long. McDonald site-wide: 3.9 km + 4.2 km = 8.1 km, against 11.3 km for per-tile Refly90. Use `Refly90Degrees` only when one plan covers the whole site.
+- **No cross-line** on criss-cross flights (*Standing rules*). Generate with `generate_lidar_mission.py --criss-cross` (27 items single-flight; fig-8 #2 at the survey exit).
+- **Budget:** check every flight against the 15-min limit. Expect roughly 2× the single-grid flights and battery packs for a site-wide criss-cross.
+- **Lidar side effect:** about 4 passes per point instead of 2 (2 per grid at the 90° FOV, spacing = AGL convention). That's harmless; the per-pass density is unchanged.
+- **Report** `photo_overlap.py` per grid direction and combined. It does both automatically when a plan has Refly90 or the plans have different angles.
+- **Re-angling tiled plans breaks the seams.** Changing the survey angle in AMC on plans whose strips were built n × spacing wide for the OLD angle lets AMC re-centre the lines in each strip. Lines that meet between flights then end up farther apart than the spacing. McDonald 2026-10-06: 82° lines in strips built for 88.6° were about 70 m apart across flights 1/2, and seam sidelap was 3–7%. Rebuild the strips at the new angle, or check `side, across flight seams only` in the site-combined report.
+
+### Photogrammetry overlap (`scripts/photo_overlap.py`)
+
+Run it on every generated plan, singly and site-combined. Sourced rules it implements (adversarial multi-agent review, 2026-10-06):
+
+| Rule | Source |
+|---|---|
+| Endlap/sidelap are LINEAR fractions of the photo dimension: (G−B)/G, (G−W)/G | UW CEE 424 lecture 1 (Wolf notation) |
+| ASPRS UAS addendum states them as % of image AREA. Report linear as primary and area as secondary | ASPRS Positional Accuracy Std Ed.2 V2, Add. V A.5.4 |
+| Nominal overlap/GSD are at MEAN terrain, but the MINIMUM overlap must hold at the HIGHEST relief, so report the worst position across the frame | Pryor, HRB Bull. 228; NJDOT photogrammetry guidelines; USACE EM 1110-1-1000 |
+| SfM: endlap 75–85%, sidelap 65–75%. Non-SfM: endlap 55–85%, sidelap ≥30%. Raise both in steep terrain | ASPRS Ed.2 V2 Add. III |
+| UAS typical ~80/60. Sidelap "less strict" when imagery only colorizes lidar | ASPRS Ed.2 V2 Add. V |
+| Pix4D: ≥75/60 general, 80/80 fields, 85/85 forest; double grid keeps the per-grid overlap; each pixel in >5 images | support.pix4d.com 202557459, 202558689 |
+| NAIP: ≥5 images per pixel; roll < ±3° | USDA FSA NAIP best practice |
+| DOTs: NDDOT ≥75/75; NCDOT ≥85/80 (global shutter, ≥1/800 s); MDT manned 55–65 end / ≥30 side, UAS "generally higher", defers to ASPRS Ed.2 | NDDOT UAS guidelines; NCDOT UAS camera reqs; MDT Survey Manual ch. 7 |
+| Relief > 10% of flying height: end ≥55%, side 10–40% (manned) | USACE EM 1110-1-1000 |
+| Blur px = v·t/GSD at the smallest GSD; ASPRS < 1 px; strict ≤ 0.5 px | ASPRS Add. VI E.2 |
+| A6K-Lite: max 1 image/s, 1/1000 s default shutter; trigger interval or distance is set in SpatialExplorer Rover | docs.phoenixlidar.com A6K-Lite specs + trigger page |
+| PX4 cmd 206: shoots at enable, then each time the distance from the last shot is reached; no reset at bends | PX4 camera_trigger.cpp |
+
+What it reports: nominal, then per grid and combined: linear worst-position endlap, centre-line endlap, area endlap, linear sidelap (with seams between flights split out; negative values are gaps), images per cell (≥2/3/5/6), % seen from ≥2 lines / directions, nadir GSD, worst blur, frames with relief >10% of AGL, a camera-rate check, and PASS/FAIL against the table on each grid's p5. Results use the Phoenix Rover timer (`--interval`, default 2 s). AMC's cmd-206 items do not fire the camera; `--trigger plan` exists only for other payloads.
+
+**Ask or confirm before quoting:** the deliverable (`--use colorize|ortho|sfm`) and the Rover interval (`--interval 1` or `2`; run both if unknown). The mount (long side across-track) is confirmed, so `--orientation` stays at its default. Use the site DEM and offset when they exist (`--dem-meta`, `--ground-offset`). `scripts/test_photo_overlap.py` must pass after any edit; it covers flat, cross-slope closed form, seam and rate-limit cases.
+
+**Pass `--target <AOI KML>` for site runs.** Seam gaps are judged against the target area. With the default (union of the survey polygons), a gap that falls between tiles whose polygons do not touch reads as a block edge.
+
+**Carried P3s (reviews 2026-10-06, not implemented):** roll/pitch sensitivity (`--tilt`); counting photos from outer cross-line/figure-8 items; corner/radial GSD; a ray-cast convergence report; Phoenix distance-trigger semantics (chord vs path, unknown); linear endlap normalised by photo A only, not min(A, B); no endlap across bends > 20°; nominal and speed taken from the first plan only; PX4 carry uses path distance, not straight-line; turn-around photos join a grid when CameraTriggerInTurnAround is on (Stahly plans keep it off); block-edge test uses only the gap MIDPOINT, so a sliver between hand-drawn tile polygons hides a seam gap when no --target is given (decide by the length of gap inside the area); a single-line grid prints N/A in the threshold table even when forward fails; plans with the same file name in different folders merge line ids (make tags unique). Review status 2026-10-06: round 3 found no findings above P3.
+
 ## Scripts (call these — don't reimplement)
 
 | Script | Purpose |
 |---|---|
-| [scripts/generate_lidar_mission.py](scripts/generate_lidar_mission.py) | Full mission generator: polygon + HOME + AGL → .plan |
+| [scripts/generate_lidar_mission.py](scripts/generate_lidar_mission.py) | Full mission generator: polygon + HOME + AGL → .plan (`--criss-cross`: Refly90 on, no cross-line) |
+| [scripts/photo_overlap.py](scripts/photo_overlap.py) | **Photogrammetry overlap per plan and per site:** terrain-projected forward/side overlap, images per ground cell, % seen from ≥2 lines/directions, GSD, blur. Run on every generated plan. |
+| [scripts/test_photo_overlap.py](scripts/test_photo_overlap.py) | 22-check regression for photo_overlap.py: flat textbook values, cross-slope closed form, seams (incl. wide gaps and tight spacing), re-angled tiles, staircase ends, camera rate. Run after any edit. |
 | [scripts/figure8.py](scripts/figure8.py) | Gerono-lemniscate vertex generator (10 unique + 1 closer = 10 legs) |
 | [scripts/dem_lookup.py](scripts/dem_lookup.py) | USGS 3DEP terrain elevation, ~1 s/point, free, no auth |
 | [scripts/minify_plan.py](scripts/minify_plan.py) | Strip whitespace + CRLF for RC controller compatibility |
@@ -238,7 +293,7 @@ This single command runs: DEM cache → skeletonize → place tiles → place ho
 2. **HOMEs KML path** — existing launch points (will be augmented; original ones NEVER moved).
 3. **Output Missions root + corridor subdir name.**
 4. **AGL** — line spacing equals AGL per skill convention. Typical: 40 (RGB), 70 (LiDAR).
-5. **Duration window** — `[duration_min, duration_max]` (e.g. [8, 10] or [8, 12]). Default 8–10.
+5. **Duration window** — `[duration_min, duration_max]`. Default max = **15** min (*Standing rules*). Older runs used [8, 10] or [8, 12]. The tiler and verifier defaults are now 15.
 6. **Target AMC** — middle of window; influences home placement.
 7. **Tile size** — `--along` (e.g. 670 at AGL 40, 1000 at AGL 70) × `--perp` (~corridor width, ≤ 4·line_spacing).
 8. **E→W or W→E ordering** — match the operator's intended flight sequence.
@@ -836,13 +891,15 @@ For a 28 mi corridor at 4.54 km strips: 10 strips, 10 sessions, 20 flights, ~187
 - [ ] Survey `FlightSpeed` matches the cmd-178 speed
 - [ ] Standalone waypoint altitudes are AMSL via DEM-bake (NOT a flat constant)
 - [ ] First waypoint == last waypoint == HOME
-- [ ] Survey + cross-line present (mandatory on every flight, including CorridorScan-style)
+- [ ] Survey present on every flight. Cross-line present on every single-grid flight, including CorridorScan-style; absent on criss-cross flights
 - [ ] Cross-line extends past polygon edges by CROSS_MARGIN; centered ONE LINE_SPACING inset from the survey exit waypoint toward polygon interior; perpendicular to local polyline/flight-line tangent at the exit
 - [ ] Cross-line goes AFTER the survey/CorridorScan in outer items (before fig-8 END if present)
 - [ ] Figure-8s match session position: START cal iff first-after-power-up; END cal iff last-before-power-down; item count matches the variant table (29 / 18 / 7)
 - [ ] For multi-flight sessions: bracketing is consistent across the group (exactly one START cal, exactly one END cal per envelope), and paired flights share/neighbor HOMEs
 - [ ] File is minified, LF only, no BOM
 - [ ] User instructed to open + save in AMC before pushing to controller
+- [ ] Estimated duration <= 15 min per flight (cold-weather allowance included)
+- [ ] `scripts/photo_overlap.py` run on the plans (single + combined per site) and the overlap table reported to the user, with the trigger and mount assumptions stated
 - [ ] `scripts/coverage_check.py` (or coverage_check_multi for multi-plan ops) confirms target KML is covered
 - [ ] `scripts/los_check.py` reports 100% VLOS from the plan's plannedHomePosition; if not, scout_vlos_alternatives.py for the nearest VLOS-clean launch position
 - [ ] **For powerline-corridor LiDAR missions**: every sustained transect waypoint is ≥ `AGL × tan(15°)` lateral distance from any powerline (see lesson #25). Brief crossings at fig-8 / cross-line / turnaround jog / climb-RTL transit are accepted (lesson #27).

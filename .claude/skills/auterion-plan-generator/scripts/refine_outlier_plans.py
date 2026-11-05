@@ -45,7 +45,7 @@ def main():
     ap.add_argument('--dir', required=True)
     ap.add_argument('--base', default=r'C:\Users\rharbach.STAHLY\.claude\skills\auterion-plan-generator\examples\base_terrain_following.plan')
     ap.add_argument('--duration-min', type=float, default=8.0)
-    ap.add_argument('--duration-max', type=float, default=12.0)
+    ap.add_argument('--duration-max', type=float, default=15.0)  # RH 2026-10-06
     ap.add_argument('--target-amc', type=float, default=10.5)
     ap.add_argument('--agl', type=float, default=70.0)
     ap.add_argument('--max-iter', type=int, default=4)
