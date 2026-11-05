@@ -62,9 +62,12 @@ COLS = ["plan", "pattern", "pitch_deg", "agl_m", "speed_mps", "lines", "waypoint
 
 
 def _rows(rep):
-    return [[f["file"][:-5], f["pattern"], f["pitch_deg"], rep["agl_m"], rep["speed_mps"], f["lines"], f["waypoints"],
-             f["photos"], f["minutes"], f["within_limit"], rep["blur_px"], rep["forward_overlap_pct"],
-             rep["side_overlap_pct"], f["min_clearance_above_dem_m"]] for f in rep["flights"]]
+    """One row per flight; per-flight values win over set-wide ones (orbits carry their own), blank if absent."""
+    g = lambda f, k, alt=None: f.get(k, rep.get(alt or k, ""))
+    return [[f["file"][:-5], f["pattern"], f["pitch_deg"], g(f, "agl_m"), g(f, "speed_mps"), f.get("lines", ""),
+             f["waypoints"], f["photos"], f["minutes"], f["within_limit"], g(f, "blur_px"),
+             g(f, "forward_overlap_pct"), g(f, "side_overlap_pct"), f.get("min_clearance_above_dem_m", "")]
+            for f in rep["flights"]]
 
 
 def _home_line(h):
