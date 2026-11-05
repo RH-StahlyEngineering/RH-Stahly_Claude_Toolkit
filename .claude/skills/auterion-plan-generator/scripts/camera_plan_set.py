@@ -20,6 +20,8 @@ config.json keys:
   oblique_pitch gimbal pitch for oblA/oblB (default -45; goes in the file name)
   runout_m     oblique run-out past the limits (default 35)
   oblique_spacing "normal" (default: nadir line spacing) or "half" (half of it) for oblA/oblB
+  building     optional {"centroid": [lat, lon]} or {"footprint": [[lon, lat] x4]} -> wall check (walls.py; needs lidar)
+  viz3d        optional true or {"nth": 10, "lidar": true} -> <name>_3D.html (viz3d.py)
   out_dir      output folder
   save_to      optional folders to save the set into (AMC Missions, project 3-To_Field/Flight_Plans; created if
                missing); a previous set of the same name moves to superseded_<YYYYMMDD>_<reason>/
@@ -373,6 +375,30 @@ from orbits import pattern_orbit  # noqa: E402  (opt-in; needs cfg "lidar" + "or
 PATTERNS["orbit"] = pattern_orbit
 
 
+# ---------------- optional QA (walls.py, viz3d.py) ----------------
+def building_qa(site, cfg, pl, plan_paths):
+    """cfg "building" -> wall_check (+ QA PNG); cfg "viz3d" (true or {nth, lidar}) -> 3D HTML."""
+    rep, L, b = {}, None, None
+    if not (cfg.get("building") or cfg.get("viz3d")):
+        return rep
+    import walls
+    if cfg.get("lidar"):
+        L = walls.load_lidar(site, cfg["lidar"])
+    if cfg.get("building"):
+        if L is None:
+            raise SystemExit("building wall check needs cfg 'lidar' (1 m surface model)")
+        png = f"{cfg['name']}_walls_QA.png"
+        wc = walls.wall_check(site, L, cfg["building"], plan_paths, pl, os.path.join(cfg["out_dir"], png))
+        b = wc.pop("_box")
+        rep["wall_check"] = dict(qa_png=png, **wc)
+    if cfg.get("viz3d"):
+        import viz3d
+        v = cfg["viz3d"] if isinstance(cfg["viz3d"], dict) else {}
+        rep["viz3d"] = viz3d.write_3d(site, plan_paths, pl, os.path.join(cfg["out_dir"], f"{cfg['name']}_3D.html"),
+                                      L=L if v.get("lidar", True) else None, building=b, nth=v.get("nth", 10))
+    return rep
+
+
 # ---------------- entry ----------------
 def build_camera_plan_set(cfg):
     table = json.load(open(os.path.join(HERE, "payloads.json")))
@@ -459,6 +485,7 @@ def build_camera_plan_set(cfg):
                clearance_note="Clearance is above the DEM (bare earth) only; obstacles need a surface-model check.",
                assumptions=f"Trigger: fixed {pl['min_trigger_s']:g} s interval set as cmd 206 distance. "
                            "Gimbal: cmd 205 pitch support unconfirmed - check on the first leg.")
+    rep.update(building_qa(site, cfg, pl, [os.path.join(out, f["file"]) for f in flights]))
     outs = plan_outputs.summaries(rep, cfg["limits"], navs)
     for fn, txt in outs.items():
         with open(os.path.join(out, fn), "w", newline="\n") as f:
