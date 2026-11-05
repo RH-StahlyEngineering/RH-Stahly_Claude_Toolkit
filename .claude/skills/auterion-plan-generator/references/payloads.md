@@ -12,3 +12,5 @@ Single source of truth for payload numbers. Both workflows read flight-time limi
 Time per flight = `1.05 × distance / speed` + `4 s per turn` + `1.5 min overhead per flight`.
 
 These factors are provisional: recalibrate them against flown logs before trusting estimates near the per-flight limit. (LiDAR plans still use the calibrated `scripts/estimate_flight_time.py`; see [lidar.md](lidar.md).)
+
+Machine-readable copy: `scripts/payloads.json` (keys `lr1_24mm`, `miniranger3`), read by `scripts/camera_plan_set.py`. Keep both in sync.
