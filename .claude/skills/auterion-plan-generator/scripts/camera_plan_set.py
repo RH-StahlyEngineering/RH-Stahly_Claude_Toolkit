@@ -18,6 +18,7 @@ config.json keys:
                "orbit" is opt-in (see orbits.py for its keys)
   oblique_pitch gimbal pitch for oblA/oblB (default -45; goes in the file name)
   runout_m     oblique run-out past the limits (default 35)
+  oblique_spacing "normal" (default: nadir line spacing) or "half" (half of it) for oblA/oblB
   out_dir      output folder
 Writes <name>_nadir90[_k].plan (plain waypoints, terrain-baked AMSL) and <name>_report.json.
 Exit 2 with a "refused" report (and no plans) when any flight path leaves the DEM.
@@ -332,8 +333,17 @@ def oblique_overlap(pl, cam, pitch, far_clip_m=300.0):
                 side_pct_near_edge=round(100 * (1 - 2 * cam["spacing_m"] / w_near), 1))
 
 
+def oblique_cam(cam, cfg):
+    """Camera settings for oblique grids: line spacing halved when cfg oblique_spacing == "half"."""
+    sp = cfg.get("oblique_spacing", "normal")
+    if sp not in ("normal", "half"):
+        raise SystemExit(f"oblique_spacing must be normal or half, not {sp!r}")
+    return dict(cam, spacing_m=cam["spacing_m"] / 2) if sp == "half" else cam
+
+
 def _pattern_oblique(key, along):
     def pattern(site, cam, cfg, limit_min, tm):
+        cam = oblique_cam(cam, cfg)
         u0, v0 = block_axis(site.poly)
         u, v = (u0, v0) if along else (v0, -u0)
         buf = cfg.get("buffer_m", 25.0)
@@ -414,7 +424,7 @@ def build_camera_plan_set(cfg):
     obl = {}
     for s in specs:
         if s["pattern"].startswith("obl") and s["pattern"] not in obl:
-            ov = oblique_overlap(pl, cam, s["pitch"])
+            ov = oblique_overlap(pl, oblique_cam(cam, cfg), s["pitch"])
             obl[s["pattern"]] = [dict(look_bearing_deg=round(math.degrees(math.atan2(*d)) % 360, 1), **ov)
                                  for d in (s["u"], -s["u"])]
     extra = dict(overlap_by_look=obl, runout_m=cfg.get("runout_m", 35.0), far_clip_m=300.0) if obl else {}
