@@ -5,7 +5,8 @@
 config.json keys:
   name         plan-name prefix, e.g. "TooleCH"
   limits       [[lon, lat], ...] survey limits polygon (WGS84)
-  home         [lat, lon]
+  home         [lat, lon]; omit to have one suggested (plan_outputs.suggest_home), flagged to confirm
+  lidar        optional .npz (lon, lat, z_m, cls) giving obstacles for the HOME suggestion
   dem          GeoTIFF path, EPSG:4326, heights in metres (orthometric)
   payload      preset key in payloads.json (e.g. "lr1_24mm")
   agl_ft       flight height above the DEM
@@ -20,12 +21,17 @@ config.json keys:
   runout_m     oblique run-out past the limits (default 35)
   oblique_spacing "normal" (default: nadir line spacing) or "half" (half of it) for oblA/oblB
   out_dir      output folder
-Writes <name>_nadir90[_k].plan (plain waypoints, terrain-baked AMSL) and <name>_report.json.
+  save_to      optional folders to save the set into (AMC Missions, project 3-To_Field/Flight_Plans; created if
+               missing); a previous set of the same name moves to superseded_<YYYYMMDD>_<reason>/
+  supersede_reason  tag for that folder (default "rerun")
+Writes <name>_nadir90[_k].plan (plain waypoints, terrain-baked AMSL), <name>_flights.kml/.csv/.md
+and <name>_report.json.
 Exit 2 with a "refused" report (and no plans) when any flight path leaves the DEM.
 """
 import json, math, os, sys
 import numpy as np
 import tifffile
+import plan_outputs
 from pyproj import Transformer
 from shapely.geometry import Polygon, LineString
 
@@ -87,6 +93,10 @@ class Site:
         self.bw = Transformer.from_crs(epsg, 4326, always_xy=True)
         self.dem = dem
         self.poly = Polygon([self.fw.transform(*p) for p in limits])
+        if home is not None:
+            self.set_home(home)
+
+    def set_home(self, home):
         self.home = (float(home[0]), float(home[1]))
         self.hx, self.hy = self.fw.transform(home[1], home[0])
         self.home_ground = float(self.ground(self.hx, self.hy))
@@ -373,7 +383,7 @@ def build_camera_plan_set(cfg):
     os.makedirs(out, exist_ok=True)
     rep_path = os.path.join(out, f"{cfg['name']}_report.json")
     dem = Dem(cfg["dem"])
-    site = Site(cfg["limits"], cfg["home"], dem)
+    site = Site(cfg["limits"], None, dem)
     cam = camera_settings(pl, cfg)
     limit = pl["flight_limit_min"]
     base = dict(name=cfg["name"], payload=pl.get("name", cfg["payload"]),
@@ -384,8 +394,17 @@ def build_camera_plan_set(cfg):
         json.dump(rep, open(rep_path, "w", newline="\n"), indent=1)
         return rep, 2
 
-    if not site.inside(site.hx, site.hy):
+    if cfg.get("home"):
+        home = dict(lat=cfg["home"][0], lon=cfg["home"][1], source="given", needs_confirmation=False)
+    else:
+        sug = plan_outputs.suggest_home(site.fw, site.bw, cfg["limits"], dem, cfg.get("lidar"))
+        if sug is None:
+            return refuse("No HOME given and no open, flat spot found near the limits; give one.", None)
+        home = dict(sug, source="suggested", needs_confirmation=True)
+    if not site.inside(*site.fw.transform(home["lon"], home["lat"])):
         return refuse("HOME is outside the DEM's valid area.", dict(ok=False, dem=dem.path, home_inside=False))
+    site.set_home((home["lat"], home["lon"]))
+    home["ground_m"] = round(site.home_ground, 2)
     specs = [s for p in cfg.get("patterns", ["nadir"]) for s in PATTERNS[p](site, cam, cfg, limit, tm)]
     built = [(s, *(s["built"] if "built" in s else
                    line_flight(site, s["lines"], s["u"], s["v"], cam["agl_m"], cam["trigger_m"], s["k0"]))) for s in specs]
@@ -399,12 +418,13 @@ def build_camera_plan_set(cfg):
     if outside:
         return refuse(f"Flight path leaves the DEM: {outside} of {total} 1-m path samples fall outside its valid area. "
                       "Supply a DEM covering the limits plus buffer/run-outs and HOME.", ext)
-    flights = []
+    flights, navs = [], {}
     for s, nav, body, photos, nt in built:
         fn = s["name"] + ".plan"
         plan = build_plan(site, cam["speed_mps"], s["pitch"], body)
         with open(os.path.join(out, fn), "wb") as f:
             f.write(json.dumps(plan, separators=(",", ":")).encode())
+        navs[s["name"]] = [tuple(i["params"][4:7]) for i in body if i["command"] == 16]
         mins, dist = flight_minutes(nav, cam["speed_mps"], nt, tm)
         if "report" in s:   # non-grid patterns (orbits) report their own geometry
             flights.append(dict(file=fn, pattern=s["pattern"], pitch_deg=s["pitch"], photos=photos,
@@ -428,7 +448,7 @@ def build_camera_plan_set(cfg):
             obl[s["pattern"]] = [dict(look_bearing_deg=round(math.degrees(math.atan2(*d)) % 360, 1), **ov)
                                  for d in (s["u"], -s["u"])]
     extra = dict(overlap_by_look=obl, runout_m=cfg.get("runout_m", 35.0), far_clip_m=300.0) if obl else {}
-    rep = dict(status="ok", **base, dem_extent=ext, **extra,
+    rep = dict(status="ok", **base, home=home, dem_extent=ext, **extra,
                speed_mps=cam["speed_mps"], speed_mph=round(cam["speed_mps"] * 2.23694, 1),
                agl_m=round(cam["agl_m"], 2), gsd_mm=round(cam["gsd_m"] * 1000, 2), blur_px=round(cam["blur_px"], 2),
                trigger_m=cam["trigger_m"], trigger_s=pl["min_trigger_s"],
@@ -439,6 +459,14 @@ def build_camera_plan_set(cfg):
                clearance_note="Clearance is above the DEM (bare earth) only; obstacles need a surface-model check.",
                assumptions=f"Trigger: fixed {pl['min_trigger_s']:g} s interval set as cmd 206 distance. "
                            "Gimbal: cmd 205 pitch support unconfirmed - check on the first leg.")
+    outs = plan_outputs.summaries(rep, cfg["limits"], navs)
+    for fn, txt in outs.items():
+        with open(os.path.join(out, fn), "w", newline="\n") as f:
+            f.write(txt)
+    if cfg.get("save_to"):
+        sup = plan_outputs.save_set(out, [f["file"] for f in flights] + list(outs), cfg["name"], cfg["save_to"],
+                                    cfg.get("supersede_reason", "rerun"))
+        rep["saved"] = [dict(folder=d, superseded_to=v) for d, v in sup.items()]
     json.dump(rep, open(rep_path, "w", newline="\n"), indent=1)
     return rep, 0
 
