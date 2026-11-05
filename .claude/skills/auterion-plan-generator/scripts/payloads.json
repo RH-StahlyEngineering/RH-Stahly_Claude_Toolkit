@@ -1,0 +1,7 @@
+{"_doc": "Machine-readable twin of references/payloads.md. Keep both in sync.",
+ "time_model": {"distance_factor": 1.05, "turn_s": 4.0, "overhead_min": 1.5},
+ "payloads": {
+  "miniranger3": {"type": "lidar", "flight_limit_min": 15},
+  "lr1_24mm": {"type": "camera", "name": "Sony ILX-LR1 + 24 mm lens on Freefly Astro", "flight_limit_min": 26,
+    "sensor_w_mm": 35.7, "sensor_h_mm": 23.8, "image_w_px": 9504, "image_h_px": 6336, "pixel_um": 3.76,
+    "focal_mm": 24.0, "orientation": "long side across-track", "min_trigger_s": 2.0, "mb_per_photo": 60}}}

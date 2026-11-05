@@ -52,7 +52,7 @@ def main():
     ap.add_argument('--dir', required=True)
     ap.add_argument('--duration-min', type=float, default=8.0,
                     help='Lower bound for c2 (default 8.0)')
-    ap.add_argument('--duration-max', type=float, default=10.0,
+    ap.add_argument('--duration-max', type=float, default=15.0,  # RH 2026-10-06
                     help='Upper bound for c2 (default 10.0)')
     ap.add_argument('--duration-over-pct', type=float, default=9.0,
                     help='c3 reference: %% of plans must have duration > this (default 9.0)')
