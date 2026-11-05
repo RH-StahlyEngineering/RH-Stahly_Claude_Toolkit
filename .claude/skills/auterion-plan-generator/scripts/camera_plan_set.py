@@ -14,7 +14,9 @@ config.json keys:
   speed_margin fly this fraction slower than the blur limit allows (default 0.15)
   side_pct     nadir side overlap (default 80)
   buffer_m     nadir grid buffer around limits (default 25)
-  patterns     list; this version: ["nadir"]  (oblique grids / orbits register in PATTERNS)
+  patterns     list of "nadir", "oblA" (along block axis), "oblB" (across); orbits register in PATTERNS
+  oblique_pitch gimbal pitch for oblA/oblB (default -45; goes in the file name)
+  runout_m     oblique run-out past the limits (default 35)
   out_dir      output folder
 Writes <name>_nadir90[_k].plan (plain waypoints, terrain-baked AMSL) and <name>_report.json.
 Exit 2 with a "refused" report (and no plans) when any flight path leaves the DEM.
@@ -196,10 +198,12 @@ def line_flight(site, lines, u, v, agl, trig, k0=0):
     home_wp = (site.hx, site.hy, site.home_ground + agl)
     nav, body, photos = [home_wp], [wp_item(site, *home_wp)], 0
     for typ, a, b in segs:
+        full = densify(site, a, b, agl)
         if typ == "line":
             body.append(simple(206, [trig, 0, 1, 0, 0, 0, 0]))
-            photos += int(math.hypot(b[0] - a[0], b[1] - a[1]) / trig) + 1
-        pts = densify(site, a, b, agl)[1:]
+            # photos per line from the 3D (terrain-following) path length between its waypoints
+            photos += int(sum(math.dist(p, q) for p, q in zip(full[:-1], full[1:])) / trig) + 1
+        pts = full[1:]
         if b == H:
             pts[-1] = home_wp
         for q in pts:
@@ -262,7 +266,27 @@ def tracking(site, nav, agl):
     """(max |alt - (DEM + agl)| along the flown path, min height above DEM)."""
     X, Y, Z = sample_path(nav)
     g = site.ground(X, Y)
-    return float(np.abs(Z - g - agl).max()), float((Z - g).min())
+    e = np.abs(Z - g - agl)
+    return float(e.max()), float((Z - g).min())
+
+
+def tracking_misses(site, nav, agl, tol=TRACK_TOL_M):
+    """Stretches of the flown path where |alt - (DEM + agl)| > tol, each with its min clearance."""
+    X, Y, Z = sample_path(nav)
+    g = site.ground(X, Y)
+    bad = np.abs(Z - g - agl) > tol
+    out, i = [], 0
+    while i < len(bad):
+        if bad[i]:
+            j = i
+            while j < len(bad) and bad[j]:
+                j += 1
+            out.append(dict(length_m=j - i, max_err_m=round(float(np.abs(Z[i:j] - g[i:j] - agl).max()), 2),
+                            min_clearance_m=round(float((Z[i:j] - g[i:j]).min()), 1)))
+            i = j
+        else:
+            i += 1
+    return out
 
 
 # ---------------- patterns (ticket 03 adds oblique grids, ticket 07 orbits) ----------------
@@ -291,7 +315,39 @@ def pattern_nadir(site, cam, cfg, limit_min, tm):
                  lines=lines[a:b], k0=a, n_total=len(lines)) for q, (a, b) in enumerate(groups)]
 
 
-PATTERNS = {"nadir": pattern_nadir}
+def oblique_overlap(pl, cam, pitch, far_clip_m=300.0):
+    """Per look direction (every second line looks the same way): forward overlap along the look
+    and side overlap measured at the near edge (narrowest strip). Far-edge rays clipped at far_clip_m."""
+    agl, f = cam["agl_m"], pl["focal_mm"]
+    tilt = math.radians(90 + pitch)                       # off-nadir angle (-45 -> 45 deg)
+    hfa = math.atan(pl["sensor_h_mm"] / 2 / f)            # half FOV along the look
+    near = agl * math.tan(tilt - hfa)
+    ctr = agl * math.tan(tilt)
+    far = min(agl * math.tan(tilt + hfa) if tilt + hfa < math.pi / 2 else math.inf, far_clip_m)
+    w_near = pl["sensor_w_mm"] * (agl / math.cos(tilt - hfa)) / math.hypot(pl["sensor_h_mm"] / 2, f)
+    fwd_fp = min(2 * (ctr - near), far - near)
+    return dict(near_m=round(near, 1), centre_m=round(ctr, 1), far_m=round(far, 1), near_width_m=round(w_near, 1),
+                forward_pct=round(100 * (1 - cam["trigger_m"] / fwd_fp), 1),
+                side_pct_near_edge=round(100 * (1 - 2 * cam["spacing_m"] / w_near), 1))
+
+
+def _pattern_oblique(key, along):
+    def pattern(site, cam, cfg, limit_min, tm):
+        u0, v0 = block_axis(site.poly)
+        u, v = (u0, v0) if along else (v0, -u0)
+        buf = cfg.get("buffer_m", 25.0)
+        area = site.poly.buffer(buf, join_style=2)
+        runout = cfg.get("runout_m", 35.0)
+        lines = grid_lines(area, u, v, cam["spacing_m"], max(0.0, runout - buf))
+        groups = split_by_battery(site, lines, u, v, cam, limit_min, tm)
+        pitch = cfg.get("oblique_pitch", -45)
+        base = f"{cfg['name']}_{key}{abs(int(round(pitch)))}"
+        return [dict(name=base if len(groups) == 1 else f"{base}_{q + 1}", pattern=key, pitch=pitch, u=u, v=v,
+                     lines=lines[a:b], k0=a, n_total=len(lines)) for q, (a, b) in enumerate(groups)]
+    return pattern
+
+
+PATTERNS = {"nadir": pattern_nadir, "oblA": _pattern_oblique("oblA", True), "oblB": _pattern_oblique("oblB", False)}
 
 
 # ---------------- entry ----------------
@@ -343,9 +399,17 @@ def build_camera_plan_set(cfg):
                             waypoints=sum(i["command"] == 16 for i in body), photos=photos,
                             distance_m=round(dist, 1), minutes=round(mins, 1), limit_min=limit,
                             within_limit=mins <= limit, terrain_tracking_max_err_m=round(err, 2),
-                            min_clearance_above_dem_m=round(clr, 1)))
+                            min_clearance_above_dem_m=round(clr, 1),
+                            terrain_tracking_misses=tracking_misses(site, nav, cam["agl_m"])))
     n_ph = sum(f["photos"] for f in flights)
-    rep = dict(status="ok", **base, dem_extent=ext,
+    obl = {}
+    for s in specs:
+        if s["pattern"].startswith("obl") and s["pattern"] not in obl:
+            ov = oblique_overlap(pl, cam, s["pitch"])
+            obl[s["pattern"]] = [dict(look_bearing_deg=round(math.degrees(math.atan2(*d)) % 360, 1), **ov)
+                                 for d in (s["u"], -s["u"])]
+    extra = dict(overlap_by_look=obl, runout_m=cfg.get("runout_m", 35.0), far_clip_m=300.0) if obl else {}
+    rep = dict(status="ok", **base, dem_extent=ext, **extra,
                speed_mps=cam["speed_mps"], speed_mph=round(cam["speed_mps"] * 2.23694, 1),
                agl_m=round(cam["agl_m"], 2), gsd_mm=round(cam["gsd_m"] * 1000, 2), blur_px=round(cam["blur_px"], 2),
                trigger_m=cam["trigger_m"], trigger_s=pl["min_trigger_s"],

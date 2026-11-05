@@ -15,10 +15,10 @@ def check(name, ok, detail=""):
     if not ok: FAILS.append(name)
 
 
-def run(limits, home, out):
+def run(limits, home, out, patterns=("nadir",)):
     cfg = dict(name="TooleCH", limits=limits, home=home, dem=os.path.join(FIX, "toole_dtm_v4.tif"),
                payload="lr1_24mm", agl_ft=200, shutter=1000, blur_px=0.75, speed_margin=0.15,
-               side_pct=80, patterns=["nadir"], out_dir=out)
+               side_pct=80, patterns=list(patterns), out_dir=out)
     p = os.path.join(out, "cfg.json"); json.dump(cfg, open(p, "w"))
     r = subprocess.run([sys.executable, SCRIPT, p], capture_output=True, text=True)
     rep = json.load(open(os.path.join(out, "TooleCH_report.json")))
@@ -69,6 +69,29 @@ def test_refuses_outside_dem():
     check("refusal: no plan written (grid case)", not [f for f in os.listdir(out) if f.endswith(".plan")])
 
 
+def test_toole_oblique():
+    out = tempfile.mkdtemp()
+    rc, rep = run(TOOLE["limits"], TOOLE["home"], out, ("nadir", "oblA", "oblB"))
+    check("oblique: exit 0", rc == 0, rc)
+    for pat, ref in (("oblA", 198), ("oblB", 221)):
+        fl = [f for f in rep["flights"] if f["pattern"] == pat]
+        ph = sum(f["photos"] for f in fl)
+        check(f"{pat} photos {ref} +-2", abs(ph - ref) <= 2, ph)
+        check(f"{pat} each flight under 26 min", fl and all(f["minutes"] < 26 for f in fl), [f["minutes"] for f in fl])
+        for f in fl:
+            check(f"{f['file']}: pitch -45 in name", f["file"].startswith(f"TooleCH_{pat}45") and f["pitch_deg"] == -45)
+            it = json.loads(open(os.path.join(out, f["file"]), "rb").read())["mission"]["items"]
+            check(f"{f['file']}: cmd 205 -45", [i["params"][0] for i in it if i["command"] == 205] == [-45])
+            check(f"{f['file']}: tracking misses reported", "terrain_tracking_misses" in f
+                  and "min_clearance_above_dem_m" in f, f.get("terrain_tracking_misses"))
+        ov = rep["overlap_by_look"][pat]
+        check(f"{pat}: 2 look directions with fwd+side", len(ov) == 2 and all(
+            0 < d["forward_pct"] < 100 and 0 < d["side_pct_near_edge"] < 100 for d in ov), ov)
+    looks = {d["look_bearing_deg"] for p in ("oblA", "oblB") for d in rep["overlap_by_look"][p]}
+    check("4 distinct look directions", len(looks) == 4, sorted(looks))
+    check("run-out default 35 m", rep["runout_m"] == 35.0)
+
+
 if __name__ == "__main__":
-    test_toole_nadir(); test_refuses_outside_dem()
+    test_toole_nadir(); test_refuses_outside_dem(); test_toole_oblique()
     print("ALL PASS" if not FAILS else f"{len(FAILS)} FAIL"); sys.exit(1 if FAILS else 0)
