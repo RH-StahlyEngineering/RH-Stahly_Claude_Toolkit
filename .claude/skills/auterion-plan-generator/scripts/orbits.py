@@ -66,7 +66,7 @@ def pattern_orbit(site, cam, cfg, limit_min, tm):
         specs.append(dict(name=name, pattern="orbit", pitch=pitch, built=(nav, body, photos, 0),
                           report=dict(radius_m=r, height_m=h, requested_height_m=h0, raised_m=round(h - h0, 1),
                                       ring_amsl_m=round(amsl, 2), roi_amsl_m=round(roi_amsl, 2),
-                                      min_lidar_clearance_m=round(amsl - top, 1),
+                                      min_lidar_clearance_m=round(amsl - top, 1) if np.isfinite(top) else None,
                                       clearance_note=(f"Ring raised {h - h0:g} m (from {h0:g} to {h:g} m above base) "
                                                       f"for >= {CLEAR_M:g} m over lidar within {CLEAR_R_M:g} m.")
                                       if h > h0 else "Ring clears lidar by the required margin.")))

@@ -106,13 +106,16 @@ def summaries(rep, limits, navs):
 
 # ---------------- saving ----------------
 def _is_set_file(name, fn):
-    return (fn.startswith(name + "_") and (fn.endswith(".plan") or fn in
-            {f"{name}_flights.{e}" for e in ("csv", "md", "kml")} or fn == f"{name}_report.json"))
+    """Files camera_plan_set writes for set <name>; not another set that merely shares the prefix."""
+    n = re.escape(name)
+    return bool(re.fullmatch(rf"{n}_(nadir\d+|obl[AB]\d+|orbit_r[^_]+_h[^_]+_p\d+)(_\d+)?\.plan", fn)
+                or fn in {f"{name}_flights.{e}" for e in ("csv", "md", "kml")}
+                | {f"{name}_report.json", f"{name}_walls_QA.png", f"{name}_3D.html"})
 
 
 def save_set(src_dir, files, name, dests, reason="rerun", today=None):
     """Copy files (names in src_dir) to each dest (created if missing). An existing set of the same name
-    (<name>_*.plan, <name>_flights.*, <name>_report.json) is first moved to superseded_<YYYYMMDD>_<reason>/.
+    (its .plan files, <name>_flights.*, _report.json, _walls_QA.png, _3D.html) is first moved to superseded_<YYYYMMDD>_<reason>/.
     Nothing is deleted; other files are untouched. Returns {dest: superseded_dir or None}."""
     tag = re.sub(r"[^A-Za-z0-9]+", "_", reason).strip("_") or "rerun"
     day = (today or datetime.date.today()).strftime("%Y%m%d")

@@ -26,11 +26,12 @@ config.json keys:
   save_to      optional folders to save the set into (AMC Missions, project 3-To_Field/Flight_Plans; created if
                missing); a previous set of the same name moves to superseded_<YYYYMMDD>_<reason>/
   supersede_reason  tag for that folder (default "rerun")
-Writes <name>_nadir90[_k].plan (plain waypoints, terrain-baked AMSL), <name>_flights.kml/.csv/.md
-and <name>_report.json.
+Writes one .plan per pattern/battery (<name>_nadir90[_k], _oblA45, _oblB45, _orbit_...; plain waypoints,
+terrain-baked AMSL), <name>_flights.kml/.csv/.md, <name>_report.json, and with building/viz3d
+<name>_walls_QA.png / <name>_3D.html. save_to gets all of them.
 Exit 2 with a "refused" report (and no plans) when any flight path leaves the DEM.
 """
-import json, math, os, sys
+import json, math, os, shutil, sys
 import numpy as np
 import tifffile
 import plan_outputs
@@ -172,10 +173,14 @@ def densify(site, a, b, agl):
                 if c < best[j]:
                     best[j] = c
                     prev[j] = i
-        sel = [n]
-        while sel[-1] != 0:
-            sel.append(prev[sel[-1]])
-        sel = sel[::-1]
+        if prev[n] < 0:   # no chain of 10-80 m legs reaches the end: even legs at <= max spacing
+            k = max(1, int(math.ceil(L / MAX_WP_SPACING_M)))
+            sel = [int(round(q)) for q in np.linspace(0, n, k + 1)]
+        else:
+            sel = [n]
+            while sel[-1] != 0:
+                sel.append(prev[sel[-1]])
+            sel = sel[::-1]
     return [(P[q, 0], P[q, 1], float(tgt[q])) for q in sel]
 
 
@@ -491,10 +496,14 @@ def build_camera_plan_set(cfg):
         with open(os.path.join(out, fn), "w", newline="\n") as f:
             f.write(txt)
     if cfg.get("save_to"):
-        sup = plan_outputs.save_set(out, [f["file"] for f in flights] + list(outs), cfg["name"], cfg["save_to"],
+        qa = [x for x in (rep.get("wall_check", {}).get("qa_png"), rep.get("viz3d", {}).get("file")) if x]
+        sup = plan_outputs.save_set(out, [f["file"] for f in flights] + list(outs) + qa, cfg["name"], cfg["save_to"],
                                     cfg.get("supersede_reason", "rerun"))
         rep["saved"] = [dict(folder=d, superseded_to=v) for d, v in sup.items()]
-    json.dump(rep, open(rep_path, "w", newline="\n"), indent=1)
+    with open(rep_path, "w", newline="\n") as fh:
+        json.dump(rep, fh, indent=1)
+    for d in cfg.get("save_to") or []:   # report last: it records where the set was saved
+        shutil.copy2(rep_path, d)
     return rep, 0
 
 

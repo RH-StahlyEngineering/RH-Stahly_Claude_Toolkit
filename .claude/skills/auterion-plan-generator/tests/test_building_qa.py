@@ -21,7 +21,8 @@ def test_toole_walls_and_3d():
     cfg = dict(name="TooleCH", limits=TOOLE["limits"], home=TOOLE["home"], dem=os.path.join(FIX, "toole_dtm_v4.tif"),
                payload="lr1_24mm", agl_ft=200, shutter=1000, blur_px=0.75, speed_margin=0.15, side_pct=80,
                patterns=["nadir", "oblA", "oblB"], lidar=os.path.join(FIX, "toole_lidar_2020.npz"),
-               building=dict(centroid=CENTROID), viz3d=True, out_dir=out)
+               building=dict(centroid=CENTROID), viz3d=True, out_dir=out,
+               save_to=[os.path.join(out, "saved")])
     p = os.path.join(out, "cfg.json"); json.dump(cfg, open(p, "w"))
     r = subprocess.run([sys.executable, SCRIPT, p], capture_output=True, text=True)
     check("exit 0", r.returncode == 0, r.stderr[-800:])
@@ -37,6 +38,9 @@ def test_toole_walls_and_3d():
     check("overall pass", wc.get("pass") is True)
     b = wc.get("building", {})
     check("box fitted, plausible size", 10 < min(b.get("dims_m", [0, 0])) and max(b.get("dims_m", [99, 99])) < 45, b.get("dims_m"))
+    saved = os.path.join(out, "saved")
+    for fn in ("TooleCH_walls_QA.png", "TooleCH_3D.html", "TooleCH_report.json"):
+        check(f"save_to has {fn}", os.path.exists(os.path.join(saved, fn)))
     png = os.path.join(out, wc.get("qa_png", "missing"))
     check("QA PNG written", os.path.isfile(png) and open(png, "rb").read(4) == b"\x89PNG", png)
     v = rep.get("viz3d", {})

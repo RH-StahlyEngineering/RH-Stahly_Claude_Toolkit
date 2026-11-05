@@ -130,7 +130,11 @@ def fit_building(site, L, bcfg, cell=1.0):
         R, mn, mx = _minbox(P)
         mn, mx = mn - cell / 2, mx + cell / 2
         C = np.array([[mn[0], mn[1]], [mx[0], mn[1]], [mx[0], mx[1]], [mn[0], mx[1]]]) @ R
-    roof = bcfg.get("roof_amsl") or float(np.percentile(G[cells], 90)) if cells.any() else bcfg.get("roof_amsl")
+    roof = bcfg.get("roof_amsl")
+    if roof is None:
+        if not cells.any():
+            raise SystemExit("building: no smooth above-ground lidar cells near it; give footprint + roof_amsl")
+        roof = float(np.percentile(G[cells], 90))
     base = float(np.min(site.ground(C[:, 0], C[:, 1])))
     e = C[1] - C[0]
     a = math.atan2(e[1], e[0])
