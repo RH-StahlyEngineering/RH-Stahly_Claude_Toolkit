@@ -14,7 +14,8 @@ config.json keys:
   speed_margin fly this fraction slower than the blur limit allows (default 0.15)
   side_pct     nadir side overlap (default 80)
   buffer_m     nadir grid buffer around limits (default 25)
-  patterns     list of "nadir", "oblA" (along block axis), "oblB" (across); orbits register in PATTERNS
+  patterns     list, default ["nadir"]; also "oblA" (along block axis), "oblB" (across);
+               "orbit" is opt-in (see orbits.py for its keys)
   oblique_pitch gimbal pitch for oblA/oblB (default -45; goes in the file name)
   runout_m     oblique run-out past the limits (default 35)
   out_dir      output folder
@@ -348,6 +349,8 @@ def _pattern_oblique(key, along):
 
 
 PATTERNS = {"nadir": pattern_nadir, "oblA": _pattern_oblique("oblA", True), "oblB": _pattern_oblique("oblB", False)}
+from orbits import pattern_orbit  # noqa: E402  (opt-in; needs cfg "lidar" + "orbits")
+PATTERNS["orbit"] = pattern_orbit
 
 
 # ---------------- entry ----------------
@@ -374,7 +377,8 @@ def build_camera_plan_set(cfg):
     if not site.inside(site.hx, site.hy):
         return refuse("HOME is outside the DEM's valid area.", dict(ok=False, dem=dem.path, home_inside=False))
     specs = [s for p in cfg.get("patterns", ["nadir"]) for s in PATTERNS[p](site, cam, cfg, limit, tm)]
-    built = [(s, *line_flight(site, s["lines"], s["u"], s["v"], cam["agl_m"], cam["trigger_m"], s["k0"])) for s in specs]
+    built = [(s, *(s["built"] if "built" in s else
+                   line_flight(site, s["lines"], s["u"], s["v"], cam["agl_m"], cam["trigger_m"], s["k0"]))) for s in specs]
     # DEM-extent check over every flight path (1 m samples) before anything is written
     outside = total = 0
     for _, nav, *_ in built:
@@ -392,6 +396,11 @@ def build_camera_plan_set(cfg):
         with open(os.path.join(out, fn), "wb") as f:
             f.write(json.dumps(plan, separators=(",", ":")).encode())
         mins, dist = flight_minutes(nav, cam["speed_mps"], nt, tm)
+        if "report" in s:   # non-grid patterns (orbits) report their own geometry
+            flights.append(dict(file=fn, pattern=s["pattern"], pitch_deg=s["pitch"], photos=photos,
+                                waypoints=sum(i["command"] == 16 for i in body), distance_m=round(dist, 1),
+                                minutes=round(mins, 1), limit_min=limit, within_limit=mins <= limit, **s["report"]))
+            continue
         err, clr = tracking(site, nav, cam["agl_m"])
         a = s["k0"]
         flights.append(dict(file=fn, pattern=s["pattern"], pitch_deg=s["pitch"],
