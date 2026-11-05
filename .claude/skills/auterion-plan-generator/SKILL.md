@@ -23,7 +23,7 @@ Builds, modifies, and validates `.plan` files for Ryan's PX4-multirotor (Freefly
 Settle the payload before anything else; it decides the workflow, the flight-time limit, and the checks.
 
 - **LiDAR (MiniRanger-3)** → follow [references/lidar.md](references/lidar.md): canonical mission structure, session model, Q&A, workflow, scripts, corridor missions, lessons learned, final checklist.
-- **Camera photogrammetry (Sony ILX-LR1)** → follow [references/photogrammetry.md](references/photogrammetry.md).
+- **Camera photogrammetry (Sony ILX-LR1)** → follow [references/photogrammetry.md](references/photogrammetry.md): defaults Q&A, trade-off sweep before any build, gimbal rule, Toole lessons. Offer every camera default and build only on RH's confirmation.
 - Payload specs, per-flight time limits, and the flight-time model → [references/payloads.md](references/payloads.md).
 
 When the user's request leaves the payload open, ask.
