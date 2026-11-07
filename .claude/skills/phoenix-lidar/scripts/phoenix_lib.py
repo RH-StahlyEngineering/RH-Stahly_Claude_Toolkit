@@ -32,9 +32,12 @@ def ecef2geo(X, Y, Z):
     return math.degrees(lat), math.degrees(lon), h
 
 
-def mt_stateplane_to_wgs84(N_ft, E_ft):
-    """Montana State Plane NAD83 US-ft (EPSG:2256) -> WGS84 lat/lon. Inverse Lambert CC (2SP)."""
-    usft = 1200 / 3937; E = E_ft * usft; N = N_ft * usft
+def mt_stateplane_to_wgs84(N_ft, E_ft, foot=0.3048):
+    """Montana State Plane NAD83 (EPSG:2256 / 6515) -> lat/lon. Inverse Lambert CC (2SP).
+    MT State Plane's legal foot is the INTERNATIONAL foot (0.3048); EPSG 2256/6515 are ift.
+    Pass foot=1200/3937 only if the control is verifiably US survey ft (check: header APPROX
+    POSITION reproduced to mm with the right foot; the wrong one is off ~1.3-1.5 m)."""
+    E = E_ft * foot; N = N_ft * foot
     a = 6378137.0; f = 1 / 298.257222101; e2 = 2 * f - f * f; e = math.sqrt(e2)
     p1, p2, p0, l0 = map(math.radians, (45, 49, 44.25, -109.5)); FE = 600000.0
     m = lambda p: math.cos(p) / math.sqrt(1 - e2 * math.sin(p) ** 2)
@@ -153,7 +156,8 @@ def read_rinex_header(path):
 
 
 def find_obs_files(d):
-    return [f for f in glob.glob(os.path.join(d, '*')) if re.search(r'\.\d\do$', f, re.I)]
+    """Recursive: bases are commonly stored one folder per receiver/occupation (Base_RINEX\\<id>\\)."""
+    return [f for f in glob.glob(os.path.join(d, '**', '*'), recursive=True) if re.search(r'\.\d\do$', f, re.I)]
 
 
 # ---------- session classification ----------
@@ -165,7 +169,9 @@ def classify_session(folder):
     if txt:
         t = open(txt[0], 'r', errors='replace').read()
         m = re.search(r'events/photos recorded for CAM0:\s*(\d+)\s*/\s*(\d+)', t)
-        valid = (m.group(1) == m.group(2)) if m else True
+        # off-by-one (e.g. 2043/2042 with 2043 jpg on disk) is common and not a reason to drop the
+        # LiDAR; tolerate |N-M|<=1 and let the camera step deal with it. Larger mismatch = invalid.
+        valid = (abs(int(m.group(1)) - int(m.group(2))) <= 1) if m else True
     typ = 'AERIAL' if glob.glob(os.path.join(folder, 'cam0', '*.jpg')) else 'MOBILE'
     navs = glob.glob(os.path.join(folder, '*.nav'))
     return {'session': s, 'type': typ, 'valid_txt': valid, 'nav': navs[0] if navs else None}

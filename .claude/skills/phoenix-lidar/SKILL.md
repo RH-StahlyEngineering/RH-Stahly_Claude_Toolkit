@@ -79,11 +79,25 @@ band (the productive on-line speed; turns/accel are masked). See `references/coo
 Details you'll need are in the references — read the relevant one when the task calls for it:
 - **`references/nav_and_rinex.md`** — `.nav` NovAtel binary message offsets, GPS→UTC, RINEX header fields.
 - **`references/coordinates_and_footprints.md`** — ECEF→geodetic, Montana State Plane (EPSG:2256)→WGS84,
-  T04 filename decode (`[receiver][DOY][session]`), footprint swath model.
+  **custom LDPs (no EPSG code) and the international-vs-US-survey-foot trap**, T04 filename decode
+  (`[receiver][DOY][session]`), footprint swath model.
 - **`references/workflow.md`** — validity rules, base-selection policy, the 7/10-mi baseline convention,
   and the gotchas (leap seconds, midnight-crossing windows, off-project sessions).
+- **`references/processing_workflow.md`** — the *downstream* PPK pipeline in SpatialExplorer / NavLab
+  (Inertial Explorer): **§0a establish the job CRS/unit/epoch first** → base import & SELECT → PPK
+  (aerial SPAN-UAV / mobile Ground-Vehicle, QC2) → intervals → cloud → LiDAR Snap → Align-to-GCPs →
+  classify/export, plus hard-won gotchas (orphaned CTS on re-run, SELECT-the-coord,
+  lever-arm-is-a-profile, base measure-up/transposition busts, wrong-foot 2 ppm, orthometric-vs-
+  ellipsoidal Z). **The CRS values in that ref are the Fergus project's — an example, not a default.**
+  This skill's core stops at the QA'd plan; read this ref when actually driving the point-cloud production.
 
 ## Gotchas worth remembering
+
+- **Montana State Plane is INTERNATIONAL feet** (EPSG 2256/6515; vertical NAVD88 ift = 8228). Earlier versions of this skill said US survey ft — wrong. Quick proof on any job: control converted with the right foot reproduces a GUI-converted RINEX header APPROX POSITION to mm.
+- **Never trust `ANTENNA: DELTA H` from a CLI `convertToRinex` run** — on R12i it was short by the ARP→L1 offset (0.12932 m). Compute cap→ARP from the Trimble Access job (method + slant) before PPK. See processing_workflow §0c.
+- **SE writes into the folders it opens** (session + base). Work from copies in `Processing\`. See §0b.
+- Bases stored one folder per receiver: `find_obs_files` now recurses (before, `--bases <parent>` silently found 0 bases).
+- CAM0 `N / M` off by one is tolerated (LiDAR still valid; flag for the camera step).
 
 - On-disk timestamps are the *copy* date — the real scan time is the GPS time inside `.nav`.
 - RINEX header times are GPS time; `.nav`-derived UTC is GPS − 18 s. Compare in one system; the 18 s
