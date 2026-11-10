@@ -18,7 +18,7 @@ These modes are modular. Recording can happen without entering, and entering rea
 
 All paths are hardcoded so this skill works from any conversation:
 
-- **Base directory**: `C:\Users\rharbach.STAHLY\OneDrive - Stahly Engineering\Claude_Code_Timesheets_Deltek`
+- **Base directory**: `C:\Users\rharbach\OneDrive - Stahly Engineering\Claude_Code_Timesheets_Deltek`
 - **Project CSV** (source of truth for known projects): `{base}/timesheet_projects.csv`
 - **Weekly time files**: `{base}/timesheets/YYYY-MM-DD.json` where the date is the **Saturday ending date** of the week
 - **Operational reference** (Deltek browser automation details): read `references/deltek-guide.md` in this skill's directory when entering time
@@ -37,7 +37,7 @@ These apply to both modes:
 4. **Every entry requires a comment** — no exceptions.
 5. **Never assume phase or task** unless previously established or there's only one survey option.
 6. **Use as few keywords as possible** in all searches and lookups.
-7. **Daily total hours are locked once established** — when Ryan provides start/stop times for a day (e.g., "7:30 to 6:00"), that defines the total hours for that day. That total NEVER changes unless Ryan explicitly requests it (e.g., "add an hour", "I actually worked until 7"). When Ryan later mentions meetings or other tasks within that day (e.g., "I had a 1 hour meeting"), **subtract** those hours from the main task for that day — do NOT add them on top. The start/stop times are the source of truth for total daily hours.
+7. **Daily totals.** Start/stop times ("7:30 to 6:00") set that day's total. Mon–Fri with no times default to **8 h**. Sat/Sun default to 0 unless evidence or Ryan says otherwise; holidays go to 0000-00300. Work Ryan mentions later comes **out of** the day's total (subtract it from the main task), unless he says "in addition", "on top of" or a variant, in which case it adds and the total grows. "Set Thursday to 10" always wins.
 8. **Enter what you can before asking** — if some entries map cleanly to existing rows and others are blocked on a question (unknown project number, ambiguous phase, etc.), enter the unblocked ones first via `enter-timesheet.js`, then ask Ryan about the blocked ones. Never pause the whole timesheet to wait on one question. Mark the blocked entries' `status` as `pending` and the entered ones as `entered`, so the next pass only touches what's left.
 
 ---
@@ -82,7 +82,7 @@ Turn natural language into structured entries. For each piece of work described:
 
 4. **Write the comment** — frame for managers, not for diary purposes.
 
-   **Audience:** office manager, department manager, project manager. The comment exists to inform them what work Ryan did to contribute to the project. Nothing else.
+   **Audience:** project comments print on client **invoices**, so they must read polished: client deliverable work in professional terms. Recast R&D, learning, company-improvement or rework time as the project work it served (✗ "R&D on processing method" → ✓ "Photogrammetric processing and QA"). Staff names and tool names are fine. Overhead (0000-xxxxx) comments can be plain. Comment source order: Ryan's words, then his email text, then session evidence. Never mention AI/Claude.
 
    **Include:** the specific work or deliverable (e.g. "Topographic field survey on 8th Ave NW", "Survey drafting and data processing", "Fergus Electric proposal preparation"), and any external coordination that's project-relevant ("coordination with Melanie and HDR", "meeting with Matt Pool").
 
@@ -149,6 +149,18 @@ These are known shortcuts — use them without asking:
 | DroneMapper AI development / Imperfect Data Handling work | 0000-00029 Overhead: DroneMapper AI | 0006 | — | (describe dev work) |
 | Leadership / weekly survey leadership meeting | 0000-00010 Leadership/Management | 0006 | — | (describe leadership work) |
 | Fergus Electric proposal / Great Falls Marketing & Proposals survey work | 0000-00826 Sales Admin, Proposals & Term Client OH | 0006 | 6.07 | (describe proposal) |
+| Recruiting / offer letters / intern outreach | 0000-00003 Human Resources | 0006 | 6.001 Recruitment | (describe) |
+| CE credits / MARLS / conference PDH paperwork | 0000-00007 Education and Learning | 0006 | 6.02 External education programs | (describe) |
+
+DroneMapper AI's live Deltek row is phase **0007 Continuous Improvement** (no task), not 0006.
+
+### Filling the week (Ryan's rules, agreed 2026-11-10)
+
+Ryan invokes this skill so you do the **legwork**: fill every day to its total (Rule 7) from evidence, then present the whole proposed week once for review. Don't ask gap-by-gap.
+- **Weekly per-project estimates** ("Taylor's ~5 h for the week") are targets. Spread them over the days the evidence supports; report any leftover.
+- Evidence tied clearly to a project goes into the week marked **(from evidence)**. Evidence you can't tie to a project gets listed separately for Ryan to place.
+- Time left with no evidence goes to that day's main project, marked **(no evidence)**.
+- Evening/weekend DroneMapper/Agisoft coding stays off by default. Show its evidence hours once per week and ask.
 
 ### Phase/Task Numbering
 
@@ -168,7 +180,7 @@ These are known shortcuts — use them without asking:
 
 **CRITICAL — Chrome must be launched with a separate profile.** Chrome 130+ silently rejects `--remote-debugging-port` against the default user profile (security restriction). The CDP TCP socket may bind but `/json/version` returns 404 and `dev-browser --connect` hangs on the WS handshake. The `chrome://inspect` "Discover" toggle is for finding remote devices, not for exposing CDP locally — it does NOT fix this. Workflow when CDP isn't responding:
 1. Kill all Chrome processes: `Get-Process chrome | Stop-Process -Force`
-2. Relaunch with a dedicated debug profile (preserves user's main Chrome): `Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--remote-allow-origins=*","--user-data-dir=C:\Users\rharbach.STAHLY\.chrome-debug-profile","https://seaeng.deltekfirst.com/SeaEng/app/"`
+2. Relaunch with a dedicated debug profile (preserves user's main Chrome): `Start-Process "C:\Users\rharbach\AppData\Local\Google\Chrome\Application\chrome.exe" -ArgumentList "--remote-debugging-port=9222","--remote-allow-origins=*","--user-data-dir=C:\Users\rharbach\.chrome-debug-profile","https://seaeng.deltekfirst.com/SeaEng/app/"`
 3. Verify CDP: `Invoke-WebRequest http://127.0.0.1:9222/json/version` must return JSON, not 404.
 4. The user re-logs into Deltek in the new window (the debug profile is separate so cookies don't carry over).
 
@@ -324,6 +336,37 @@ These are the failure modes that hit on a real run. The script in `scripts/enter
 11. **Survey proposals get separate rows, even when proj+phase+task match.** Per Ryan's rule (see [[feedback-survey-proposals-separate-lines]]), each distinct proposal under Sales Admin 0000-00826 (e.g. Wamsutter, Fergus Electric) must occupy its own timesheet row. To add a second row at the same proj+phase+task: open the Options menu (kebab icon, `button.rowTools_menuBtn` at x≈1863 in the right pane) of the existing 6.07 row and click **Copy** (menu items are labeled `Insert` / `Copy` / `Delete`, NOT "Insert new row" / "Copy row" / "Delete row" as older versions had). Save immediately. After reload, both rows are independently addressable by grid 0 row index. Note: row matching by `project_number + task_name + row_marker` will hit only the FIRST match — use direct grid-row-index dispatch when two rows share all three.
 
 12. **Options menu items renamed.** The Options menu items are now `Insert`, `Copy`, `Delete` (not `Insert new row`, `Copy row`, `Delete row`). Update any selector searches.
+
+13. **Duplicate rows (same proj+phase+task): use `row_index`.** `enter-timesheet.js` accepts an optional `row_index` (grid 0 `<tr>` index) that overrides text matching. Get indices from a grid-0 dump after the copies are saved. `verify-timesheet.js` does NOT support it — verify those cells with an inline script.
+
+14. **Verify with a real mouse click on the row, not `r.click()`.** On 2026-10-05 a JS `row.click()` during verify sometimes left the previous row selected, so the popup showed the previous row's hours/comment (5 of 14 false failures). Clicking the row's 2nd `<td>` with `page.mouse.click` after `scrollIntoView` fixed all of them. Cross-check hours independently by reading grid 3 `<td>` text per row index — that ignores selection state.
+
+15. **`add-line.js` returns `no_lookup_dialog`** for multi-word searches ("West of Havre"), and often for projects already on the sheet. Use `scripts/add-line-v2.js` (`add2.json`: `[{"s","phase","task"}]`). It reloads per row, waits 4 s for the lookup dialog, retypes a stale filter, and selects project, phase and task by mousedown/up on each `<td>`, then Select and Save. A full project number (e.g. `2108-00925`) as `s` works reliably. Some overhead projects have tasks you might not expect (Education 0000-00007 → 6.02). If Select stays disabled, a task is required.
+
+16. **Bottom-of-grid rows (`popup_not_open`/`row_not_found`).** Newly added rows land at the bottom. The left pane scrolls but the right pane's day inputs don't line up with the row, so the click misses. Use `scripts/enter-bottom-rows.js` (reads `entries.json`): it sets `page.setViewportSize({width:1900,height:1600})`, selects the row with a real click, then real-clicks the day input at its own coordinates. JS-dispatched clicks did NOT open the popup here.
+
+17. **Fast hours check: `scripts/grid-dump.js`.** It prints each row's grid-3 hours and the grid-5 daily totals. Compare against the JSON's per-day sums before running the slow comment sweep.
+
+18. **Copy Previous Timesheet:** the dropdown needs a real `page.mouse.click` on `.tap-target`, then a real click on the `<li>` (e.g. `10/25/2026 - 10/31/2026`). JS `.click()` leaves Copy disabled. Click Copy, then Save right away.
+
+19. **Session expiry:** Deltek logs out overnight (the page shows `User ID  Password`). Stop and ask Ryan to log in, then `page.goto` the timesheet URL again.
+
+20. **Screenshots time out** when the debug Chrome window is hidden or behind other windows. Read state from the DOM instead (`document.body.innerText`, grid dumps).
+
+21. **Submit** is a `<span>` "Submit" (top right). Clicking it opens "Confirm Electronic Signature" with a password box. **Ryan types his password himself.** Never fill it. Submit only when he asks, then reload and confirm `Timesheet Status: Submitted` plus the grid-5 totals.
+
+### Gathering evidence (every run, in this order)
+
+1. **Calendar:** Teams meetings from the Outlook calendar (`outlook_list_events`). These are fixed time blocks; place them first.
+2. **Sent mail:** `scripts/sent_mail_week.py` (Outlook COM). It's slow, about 2 min, so run it in the background.
+3. **Chrome history:** work sites only; ignore personal browsing. Read the History SQLite file from a copy (Chrome locks the original).
+4. **Claude sessions:** `scripts/session_activity.py` gives active windows per project per day from JSONL *message timestamps*. File mtimes are useless because syncs stamp them all the same. Resumed sessions span several days, so bucket by message time, not session start. Scratch-workspace sessions need their first prompt read to identify the project.
+5. **Project folders:** file mtimes in `P:\<client>\-<job>\` (e.g. `_AI\STATE.md`, flight plans, control files) show what was produced. Files others downloaded show up too (record research on Toole CH wasn't Ryan's), so treat these as weaker evidence.
+6. **Received mail:** last, for context only.
+
+Then, optionally:
+- **Let Ryan estimate:** publish an Artifact table of sent emails (number, time, to, subject, a collapsible body with quoted history and signature stripped, an hours input, a comments box, Copy output as `n: hrs | comment`). He fills it in and pastes it back. Also read artifact comments (ArtifactComments `read`).
+- **Refine comments with subagents:** give each one the session dirs and entries for a project group, analysis only, returning JSON `[{project, day, comment}]`. Pass them the invoice-comment rule. Subagents also catch mis-attributed work (e.g. a "flight plan" session that was really a different project).
 
 ### Method B: Chrome MCP (FALLBACK — for edge cases)
 

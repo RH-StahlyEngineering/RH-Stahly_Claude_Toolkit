@@ -11,6 +11,7 @@
 //     project_number: "3733-00226",       // required — for row matching
 //     task_name: "Site Survey",           // required — for row matching
 //     row_marker: "6.07",                 // optional — disambiguator if task_name is ambiguous
+//     row_index: 10,                      // optional — grid 0 <tr> index; use when several rows share proj+phase+task
 //     day: "Mon",                         // required — Sun..Sat
 //     hours: 5.0,                         // required — replaces any existing value in the cell
 //     comment: "Field prep for 8th Ave"   // required — replaces any existing comment
@@ -63,6 +64,12 @@ if (!deltekTab) {
       // wrong cell or reading empty data on verify.
       const found = await page.evaluate((args) => {
         const grids = document.querySelectorAll('.gridBody.absolute');
+        if (args.idx != null) {
+          const r = grids[0].querySelectorAll('tr')[args.idx];
+          if (!r || !r.textContent.includes(args.proj)) return { found: false };
+          r.scrollIntoView({ block: 'center', behavior: 'instant' });
+          return { found: true };
+        }
         const tryGrid = (g) => {
           if (!g) return false;
           for (const r of g.querySelectorAll('tr')) {
@@ -78,7 +85,7 @@ if (!deltekTab) {
         if (tryGrid(grids[0])) return { found: true };
         for (const g of grids) if (tryGrid(g)) return { found: true };
         return { found: false };
-      }, { proj: entry.project_number, task: entry.task_name, marker: entry.row_marker });
+      }, { proj: entry.project_number, task: entry.task_name, marker: entry.row_marker, idx: entry.row_index ?? null });
 
       if (!found.found) {
         results.push({ ...entry, status: "row_not_found" });
@@ -88,6 +95,7 @@ if (!deltekTab) {
 
       await page.evaluate((args) => {
         const grids = document.querySelectorAll('.gridBody.absolute');
+        if (args.idx != null) { grids[0].querySelectorAll('tr')[args.idx].click(); return; }
         const tryGrid = (g) => {
           if (!g) return false;
           for (const r of g.querySelectorAll('tr')) {
@@ -102,7 +110,7 @@ if (!deltekTab) {
         };
         if (tryGrid(grids[0])) return;
         for (const g of grids) if (tryGrid(g)) return;
-      }, { proj: entry.project_number, task: entry.task_name, marker: entry.row_marker });
+      }, { proj: entry.project_number, task: entry.task_name, marker: entry.row_marker, idx: entry.row_index ?? null });
       await page.waitForTimeout(700);
 
       // 3. Find day cell coordinates and click via mouse (DOM click won't open Kendo popup)
