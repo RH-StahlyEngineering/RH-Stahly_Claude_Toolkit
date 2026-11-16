@@ -162,6 +162,28 @@ Ryan invokes this skill so you do the **legwork**: fill every day to its total (
 - Time left with no evidence goes to that day's main project, marked **(no evidence)**.
 - Evening/weekend DroneMapper/Agisoft coding stays off by default. Show its evidence hours once per week and ask.
 
+### Field days: task split and units (agreed 2026-11-16)
+
+Every field day gets a task split and units, both shown with the hours for Ryan's OK.
+
+**Task split.** Look up the project's phases/tasks (CSV notes, or the live Deltek row dump). "Conventional" means non-UAV. If the project has a separate flight/UAV/aerial task (e.g. Toole 1.03 Control/Flight), propose splitting the day between it and the conventional task (e.g. 1.04 Conv. Pickup). If it has only one survey task, the whole day goes there.
+
+**Units**, per field day:
+
+| Work that day | Units |
+|---|---|
+| UAV flight | `GPSDY` 1 (base) + `UAVDY` 1 |
+| Conventional | `TSDAY` 1 for total station, or `GPSDY` 1 for GPS rover; ask which |
+| Every field day | round-trip crew mileage, unit `58` "Mileage Rate 2026 - Survey Crew", miles as quantity, route in the comment |
+
+A rover day and a flight day together: ask whether that is 1 or 2 `GPSDY`.
+
+Record units in the weekly file's `entries` like this:
+```json
+{"kind": "units", "project_number": "2071-07D26", "task_name": "Control/Flight", "phase": "0001", "task": "1.03",
+ "unit": "UAVDY", "unit_name": "Drone daily", "qty": 1, "day": "Wed", "comment": "Drone for photogrammetry flight", "status": "pending"}
+```
+
 ### Phase/Task Numbering
 
 `3.01` means Phase 3 (`0003`), Task 01. The number before the decimal is the phase, after is the task. So if the user says "put it on 3.01" that tells you both the phase and task.
@@ -195,7 +217,12 @@ Scripts live in `scripts/` and run with `dev-browser --connect --timeout <s> run
 4. **Preflight.** `preflight.js` returns `{allPresent, missing}`. Add missing rows with `add-line-v2.js` (`add2.json`: `[{"s":"<full project number>","phase":"<phase name>","task":"<task name>"}]`); trust its reload-based `allAdded`. Each distinct survey proposal under 0000-00826 gets its own row (Copy via the row's Options menu, then address it with `row_index`). Done when preflight reports `allPresent: true`.
 5. **Enter.** `enter-timesheet.js` (timeout 400+, about 15 s per cell). It skips entries already `entered`, so re-run it on failures; for `row_not_found` go back to step 4.
 6. **Verify.** `grid-dump.js`: the grid-5 daily totals equal the weekly file's per-day sums. Then `verify-timesheet.js` re-opens every cell for hours and comment; re-verify a failed cell alone before treating it as real (row pinning causes false failures). Done when every cell matches.
-7. **Record.** Set `status: "entered"` on each entered entry in the weekly file. Submit belongs to Ryan: it asks for his password, which he types himself.
+7. **Units.** Enter every `"kind": "units"` entry. Click the **Units** toggle (top right, beside Hours). Units rows are separate from hours rows: add missing ones with +Add Line, which shows Unit Table / Unit / Unit Name columns. Then fill the cells with the same popup flow as hours (quantity in `regHrs`'s place, comment in `#commentEntry`). No script covers this yet, so adapt `enter-timesheet.js` inline. Done when a Units-view dump shows every unit quantity on its day.
+8. **Record.** Set `status: "entered"` on each entered entry in the weekly file. Submit belongs to Ryan: it asks for his password, which he types himself.
+
+### Sync from Deltek
+
+When Ryan has edited or submitted in Deltek himself (he says so, or the status is `Submitted`/`Approved`), read the week in both the Hours and Units views and rewrite the weekly file's rows, hours and unit quantities to match. Deltek wins. Keep the file's comments unless a cell's comment is re-read from its popup. Run this before any new entry on that week.
 
 ---
 
