@@ -1,0 +1,6 @@
+{
+  "name": "peer-slash",
+  "version": "0.3.1",
+  "description": "Runs an allowlisted slash command when another session's message starts with one.",
+  "author": { "name": "Ryan Harbach" }
+}

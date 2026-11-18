@@ -1,0 +1,5 @@
+{
+  "name": "local-mods",
+  "owner": { "name": "Ryan Harbach" },
+  "plugins": [{ "name": "peer-slash", "source": "./" }]
+}
