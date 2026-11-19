@@ -27,6 +27,8 @@ Built-in commands such as `/clear` or `/compact` are never reachable unless you 
 
 Limits: the command must be the first text in the message, and only one command runs per message.
 
+In the Claude desktop app a session's message reaches the receiver as a prompt, not as an incoming-message event. There the mod acts only when the whole prompt is the app's own notes plus one wrapped command from a local session.
+
 ## Install
 
 Requires the Claude Code CLI (`claude`) on your PATH; the Claude desktop app uses the same plugins.
