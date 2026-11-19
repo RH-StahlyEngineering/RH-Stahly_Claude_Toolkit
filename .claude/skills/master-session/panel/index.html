@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:,">
+<title>Master session</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfaf7; --fg: #1d1c1a; --muted: #6a675f; --line: #dedbd2;
+    --card: #ffffff; --accent: #8a4b12; --warn-bg: #fdecc8; --warn-fg: #5c3b00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1917; --fg: #ecebe6; --muted: #a09d94; --line: #3a3833;
+      --card: #24231f; --accent: #e8a866; --warn-bg: #4a3610; --warn-fg: #ffe2a8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 16px; max-width: 46rem;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow-wrap: anywhere;
+  }
+  header { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 12px; }
+  h1 { font-size: 1rem; margin: 0; }
+  #status { color: var(--muted); font-size: .85rem; }
+  h2 {
+    font-size: .8rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 6px;
+  }
+  h2 .count { color: var(--fg); letter-spacing: 0; text-transform: none; }
+  section { border-top: 1px solid var(--line); padding: 12px 0; }
+  #question {
+    background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    border-radius: 6px; padding: 12px 14px; margin-bottom: 4px;
+  }
+  #question .head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  #question .head h2 { margin: 0; }
+  .toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .toggle button {
+    font: inherit; font-size: .85rem; min-height: 32px; padding: 2px 14px; border: 0; cursor: pointer;
+    background: transparent; color: var(--fg);
+  }
+  .toggle button + button { border-left: 1px solid var(--line); }
+  .toggle button[aria-pressed="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+  .toggle button:disabled { color: var(--muted); cursor: not-allowed; text-decoration: line-through; }
+  .toggle button:focus-visible { outline: 2px solid var(--fg); outline-offset: -2px; }
+  #question .explain { font-size: 1.05rem; }
+  #question .explain p { margin: 0 0 .6em; white-space: pre-line; }
+  #question .explain ul, #question .explain ol { margin: 0 0 .6em; padding-left: 1.4em; }
+  #question .explain ul { list-style: disc; }
+  #question .explain ol { list-style: decimal; }
+  #question .explain li { padding: 1px 0; white-space: pre-line; }
+  #question .explain > :last-child { margin-bottom: 0; }
+  #question .say { font-size: 1.1rem; margin: 0; }
+  #question .pick { margin: 8px 0 0; }
+  #question .pick b { color: var(--accent); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 3px 0; }
+  .meta, .none, .more { color: var(--muted); font-size: .85rem; }
+  .tag {
+    display: inline-block; font-size: .75rem; padding: 0 6px; margin-left: 6px;
+    border: 1px solid var(--line); border-radius: 999px; color: var(--muted); white-space: nowrap;
+  }
+  .tag.warn { background: var(--warn-bg); color: var(--warn-fg); border-color: transparent; font-weight: 600; }
+  .notice {
+    background: var(--warn-bg); color: var(--warn-fg);
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Master session</h1>
+  <span id="status">Reading…</span>
+</header>
+<div id="notice" class="notice" role="status" hidden></div>
+<main id="main"></main>
+
+<script>
+(function () {
+"use strict";
+// Shows /state.json and nothing else. Keeps nothing of the state: every few seconds it asks
+// again and redraws from the answer, so closing and reopening loses nothing. The one thing
+// it remembers is how RH reads the explanation: short or full.
+var EVERY_MS = 3000;
+var main = document.getElementById("main");
+var notice = document.getElementById("notice");
+var status = document.getElementById("status");
+
+function el(tag, cls, text) {
+  var node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+
+var VIEW_KEY = "master-session.explain";
+var view = "short";
+try { if (localStorage.getItem(VIEW_KEY) === "full") view = "full"; } catch (e) { /* no storage: short */ }
+var last = null;                   // the last answer drawn, to draw again when the view changes
+
+function focusView(name) {
+  var button = main.querySelector('.toggle button[data-view="' + name + '"]');
+  if (button && !button.disabled) button.focus();
+}
+
+function setView(next) {
+  view = next;
+  try { localStorage.setItem(VIEW_KEY, next); } catch (e) { /* the choice lasts until the page closes */ }
+  if (last) { draw(last.state, last.room); focusView(next); }
+}
+
+// Plain text in, DOM out: blank lines part paragraphs, runs of "- " or "1. " lines are lists.
+// Every piece goes in as text, so nothing the state holds is read as HTML.
+function prose(text) {
+  var box = el("div", "explain"), para = [], items = null, kind = null;
+  function endPara() { if (para.length) { box.append(el("p", null, para.join("\n"))); para = []; } }
+  function endList() { items = null; kind = null; }
+  String(text).replace(/\r\n?/g, "\n").split("\n").forEach(function (line) {
+    var bullet = /^\s*[-*•]\s+(.*)$/.exec(line), number = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+    var found = bullet || number, tag = bullet ? "ul" : "ol";
+    if (found) {
+      endPara();
+      if (kind !== tag) { items = el(tag); kind = tag; box.append(items); }
+      items.append(el("li", null, found[1]));
+    } else if (!line.trim()) {
+      endPara(); endList();
+    } else if (items && /^\s/.test(line)) {      // an indented line carries on the item above
+      items.lastChild.append("\n" + line.trim());
+    } else {
+      endList(); para.push(line);
+    }
+  });
+  endPara();
+  return box;
+}
+
+// The Short / Full switch. With no short explanation recorded, Short is off and says why.
+function toggle(shown, hasShort) {
+  var group = el("div", "toggle");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", "Explanation length");
+  [["short", "Short"], ["full", "Full"]].forEach(function (pair) {
+    var button = el("button", null, pair[1]);
+    button.type = "button";
+    button.dataset.view = pair[0];
+    button.setAttribute("aria-pressed", String(shown === pair[0]));
+    if (pair[0] === "short" && !hasShort) {
+      button.disabled = true;
+      button.title = "No short explanation was recorded for this question";
+    }
+    button.addEventListener("click", function () { setView(pair[0]); });
+    group.append(button);
+  });
+  return group;
+}
+
+function section(title, count) {
+  var box = el("section");
+  var head = el("h2", null, title);
+  if (count) { head.append(" "); head.append(el("span", "count", count)); }
+  box.append(head);
+  main.append(box);
+  return box;
+}
+
+// rows: [{text, tags: [..], warn, meta}]
+function list(box, rows, empty, more) {
+  if (!rows.length) { box.append(el("div", "none", empty)); return; }
+  var ul = el("ul");
+  rows.forEach(function (row) {
+    var li = el("li");
+    li.append(el("span", null, row.text));
+    (row.tags || []).forEach(function (tag) {
+      if (tag !== undefined && tag !== null && tag !== "") li.append(el("span", "tag", tag));
+    });
+    if (row.warn) li.append(el("span", "tag warn", row.warn));
+    if (row.meta) { li.append(el("div", "meta", row.meta)); }
+    ul.append(li);
+  });
+  box.append(ul);
+  if (more) box.append(el("div", "more", more));
+}
+
+// room: the store's own counts against the two limits (state.py room), so the page cannot disagree with it.
+function draw(s, room) {
+  var focused = document.activeElement && main.contains(document.activeElement)
+    ? document.activeElement.dataset.view : null;   // the timer's redraw must not take the keyboard away
+  main.replaceChildren();
+  var limits = s.limits || {};
+
+  var q = el("div"); q.id = "question"; main.append(q);
+  var head = el("div", "head"); q.append(head);
+  head.append(el("h2", null, "Your open question"));
+  if (s.question) {
+    // `full` is the name a state file from before the two explanations used.
+    var full = s.question.explain || s.question.full || s.question.short || "";
+    var brief = s.question.explain_short || "";
+    var shown = brief && view === "short" ? "short" : "full";
+    head.append(toggle(shown, Boolean(brief)));
+    q.append(prose(shown === "short" ? brief : full));
+    if (!brief) q.append(el("div", "meta", "No short explanation was recorded: this is the full one."));
+    if (s.question.recommendation) {
+      var pick = el("p", "pick"); pick.append(el("b", null, "My pick: "));
+      pick.append(el("span", null, s.question.recommendation)); q.append(pick);
+    }
+    if (s.question.asked_at) q.append(el("div", "meta", "Asked " + s.question.asked_at));
+    (s.displaced || []).slice().reverse().forEach(function (old) {
+      q.append(el("div", "meta", "Comes back after this: " + (old.short || "")));
+    });
+    if (focused) focusView(focused);
+  } else if (s.nothing_needed_said) {
+    q.append(el("p", "say", "Nothing needs you: " + s.nothing_needed_said));
+  } else {
+    q.append(el("p", "none", "No open question."));
+  }
+
+  var queue = s.queue || [];
+  list(section("Next", queue.length ? "first " + Math.min(3, queue.length) + " of " + queue.length : ""),
+    queue.slice(0, 3).map(function (i) {
+      return { text: i.text || i.id, tags: [i.group, i.kind, i.state] };
+    }), "Nothing queued.", queue.length > 3 ? (queue.length - 3) + " more after these" : "");
+
+  var running = s.running || [];
+  var runBox = section("Running", room.sessions + " of " + room.cap + " working");
+  list(runBox, running.map(function (r) {
+    // A row with no command recorded (an older master, a mechanical session) says nothing of it.
+    var owed = r.command && !r.command_sent;
+    return { text: r.id, tags: [r.group, r.kind], warn: owed ? "command not sent" : "",
+             meta: [owed ? "owed: " + r.command : "", r.deadline ? "time box until " + r.deadline : ""]
+               .filter(Boolean).join(" · ") };
+  }), "No session running.");
+  if (limits.lowered_sessions != null) {
+    runBox.append(el("div", "meta", "Cap lowered from " + limits.sessions + ": " + (limits.lowered_reason || "no reason given")));
+  }
+
+  var prs = s.prs || [];
+  list(section("PRs waiting on you", room.prs + " of " + room.pr_limit),
+    prs.map(function (p) {
+      return { text: "#" + p.number + " " + (p.line || ""),
+               tags: [p.rung != null ? "rung " + p.rung : "", p.checks ? "checks " + p.checks : ""] };
+    }), "None.");
+
+  list(section("Sessions waiting on you", String((s.waiting || []).length)),
+    (s.waiting || []).map(function (w) { return { text: w.line || "waiting on you", tags: [w.id] }; }), "None.");
+
+  if ((s.go || []).length) {
+    list(section("Groups waiting for your go", String(s.go.length)),
+      s.go.map(function (g) { return { text: g.group, meta: g.line }; }), "");
+  }
+  if ((s.frozen || []).length) {
+    list(section("Frozen groups", String(s.frozen.length)),
+      s.frozen.map(function (f) { return { text: f.group, meta: f.reason }; }), "");
+  }
+
+  list(section("Since I asked"), (s.digest || []).map(function (line) { return { text: line }; }), "Nothing new.");
+  list(section("Job asks", String((s.jobs || []).length)),
+    (s.jobs || []).map(function (j) { return { text: j.line || j.id }; }), "None.");
+}
+
+function say(message) {            // a problem: show it, and never leave an old picture standing
+  last = null;
+  main.replaceChildren();
+  notice.textContent = message;
+  notice.hidden = false;
+}
+
+function refresh() {
+  fetch("state.json", { cache: "no-store" })
+    .then(function (response) {
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return response.json();
+    })
+    .then(function (reply) {
+      var at = new Date().toLocaleTimeString();
+      if (!reply.ok) { say(reply.message); status.textContent = "Checked " + at; return; }
+      notice.hidden = true;
+      last = reply;
+      draw(reply.state, reply.room);
+      status.textContent = (reply.state.paused ? "Paused · " : "") + "Updated " + at;
+    })
+    .catch(function (err) {
+      say("The panel server is not answering (" + err.message + "). Start it again: python -X utf8 -I scripts/panel.py");
+      status.textContent = "Not connected";
+    });
+}
+
+refresh();
+setInterval(refresh, EVERY_MS);
+})();
+</script>
+</body>
+</html>
