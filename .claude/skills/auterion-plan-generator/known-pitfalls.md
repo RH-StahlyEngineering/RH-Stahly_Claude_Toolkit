@@ -205,3 +205,24 @@ Log spirals (R growing with arc length) are useful when curvature should *vary* 
 **Heuristic:** if the constraint is "land at point X with heading Y exactly," start with constant-R. Only switch to spiral if you ALSO need variable curvature (e.g., to chord-cross a previous flight path mid-arc) AND can give up the exact end-position.
 
 Incident: 2026-06-29. v5/v6 of Fergus50_S09_AB used a log spiral R_start=25 → R_end=75; arc end landed inside the corridor at +33 m perp from centerline, not at the +75 m right edge as Ryan required. To make the spiral end at +75 perp would have required R_end ≈ 185 m — a 4× wider spiral than the v4/v5 dimensions. v7 switched to constant R = AGL = 50 m circle and landed within 9 cm of the corridor right edge. See SKILL.md §39d, §39e.
+
+## 20. HOME must be the spot the pilot actually takes off from
+
+**Observed 2026-11-11 (Toole County Courthouse).** The camera plans were built with HOME in the west lot; RH launched from a lot north of the courthouse, about 11 ft lower, and the flights flew low. Treat the plan's altitudes as tied to HOME in practice, whatever the frame says.
+
+**Rule:** before building, ask where the pilot will stand and set `plannedHomePosition` (lat, lon, ground elevation from the DEM) to that spot. Every pilot note says: if you launch anywhere else, move AMC's home to your takeoff spot first.
+
+## 21. Lidar with no building or tree classes: split by return count before line-of-sight checks
+
+**Observed 2026-11-12 (Toole County Courthouse).** The USGS 3DEP 2020 tile had only class 1 (unclassified) and class 2 (ground), so a check that blocked only on class 6 (building) let sight lines run straight through the courthouse.
+
+**Rule:** count the classes first (`np.unique(las.classification)`). If 6 and 3–5 are missing, split class 1 per grid cell (~1.5 ft):
+- **building / solid:** single-return points (`number_of_returns == 1`) are at least 2× the multi-return points; clean the mask with binary closing then opening. Treat as a hard blocker.
+- **vegetation:** multi-return points (`number_of_returns > 1`). Report the sight as "through branches", not blocked. Leaf-off season usually still sees through, but a trunk on the line blocks.
+- **ground:** class 2, interpolated under buildings (nearest fill). Hard blocker 0.2 ft above the sight line.
+
+## 22. Esri World Imagery export fails silently above ~0.3 m per pixel
+
+`.../World_Imagery/MapServer/export?...&f=pjson` returns `href: ""`, `width: 0` with no error when the requested size is finer than about 0.3 m/px (seen at 0.28 m/px; 0.4 m/px worked). Then `urlopen("")` throws "unknown url type".
+
+**Rule:** size the image so ground width / pixels ≥ 0.4 m (in EPSG:3857 metres), and check `meta["href"]` before downloading. Also keep the request's pixel aspect equal to the bbox aspect, or use the returned `extent` for plotting (images in 4326 come back with square-degree pixels and stretch).
