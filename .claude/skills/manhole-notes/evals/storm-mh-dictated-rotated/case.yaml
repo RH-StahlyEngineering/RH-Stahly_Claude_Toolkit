@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: storm-mh-dictated-rotated
+expected_outcome: |
+  One MH_12141.docx: 5.5 ft dia, eccentric lid W, inverts N 5.63 / E 6.85 / S 6.75 / W 6.86, sizes 18/18/30/36, drop only on N, center 6.84, grade rings NOT RECORDED, pipe material NOT RECORDED, plan view and photo rotated to true north, 1 page form + photo page.
+context:
+  scaffold_script: place-files.sh

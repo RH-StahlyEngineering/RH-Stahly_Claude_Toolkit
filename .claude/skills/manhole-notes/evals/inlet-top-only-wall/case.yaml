@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: inlet-top-only-wall
+expected_outcome: |
+  Two inlet sheets. 12216 invert 3.83, 12 in. 12171 invert computed 4.05 = 3.00 + 0.05 + 1.00, marked as calculated. No pipe material, drop or box size invented.

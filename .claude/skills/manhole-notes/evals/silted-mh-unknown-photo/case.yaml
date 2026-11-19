@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: silted-mh-unknown-photo
+expected_outcome: |
+  MH_12237.docx with E 3.68 / W 3.88 18in, 1 ring 6 in, 4 ft dia, eccentric NE, center 3.53 noted as top of sediment, drop and material NOT RECORDED (not given), photo orientation not stated so photo not rotated and captioned as such.
+context:
+  scaffold_script: place-files.sh

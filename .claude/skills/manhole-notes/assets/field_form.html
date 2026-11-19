@@ -1,0 +1,105 @@
+<title>Manhole Notes</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* single column of field cards, one per structure; big tap targets for gloves */
+:root{--bg:#f3f5f2;--fg:#132019;--mute:#5a675f;--line:#cbd3cc;--card:#fff;--acc:#1d6b45;--warn:#a5520c;
+ --f:"Atkinson Hyperlegible",system-ui,sans-serif;--m:"JetBrains Mono",Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111714;--fg:#e4ebe6;--mute:#98a49d;--line:#2b3530;--card:#19211d;--acc:#5fd08f;--warn:#f0a35a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#111714;--fg:#e4ebe6;--mute:#98a49d;--line:#2b3530;--card:#19211d;--acc:#5fd08f;--warn:#f0a35a;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:16px/1.4 var(--f)}
+.w{max-width:820px;margin:0 auto;padding-block:14px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-size:1.4rem;margin:0}
+.sub{color:var(--mute);font-size:.9rem;margin:2px 0 12px}
+.st{font-size:.85rem;color:var(--mute);min-height:1.2em}
+.st.bad{color:var(--warn)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:12px;margin-top:14px}
+.hd{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.hd h2{margin:0;font-size:1.15rem;font-family:var(--m)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+label{display:grid;gap:3px;font-size:.78rem;letter-spacing:.05em;text-transform:uppercase;color:var(--mute);min-width:0}
+input,select,textarea{font:16px var(--f);color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;min-width:0;width:100%;box-sizing:border-box}
+input.num{font-family:var(--m);font-variant-numeric:tabular-nums}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:3px solid var(--acc);outline-offset:1px}
+.pipes{display:grid;gap:8px}
+.pipe{display:grid;grid-template-columns:60px repeat(5,1fr) 80px 80px 36px;gap:6px;align-items:end;border-top:1px dashed var(--line);padding-top:8px}
+.pipe .dir{font:700 1.1rem var(--m);color:var(--acc);align-self:center}
+@media (max-width:700px){.pipe{grid-template-columns:1fr 1fr 1fr}.pipe .dir{grid-column:1/-1}}
+button{font:700 15px var(--f);border:1px solid var(--acc);color:var(--acc);background:transparent;border-radius:6px;padding:9px 12px;cursor:pointer}
+button.x{border-color:var(--line);color:var(--mute);padding:9px 0}
+.miss{font-size:.85rem;color:var(--warn)}
+.empty{color:var(--mute);margin-top:14px}
+</style>
+<div class="w">
+<h1>Manhole notes</h1>
+<p class="sub">Measure-downs in ft from rim (inlets: top of grate/curb box). Top of pipe = outside top. Leave anything you didn't measure blank. Saves as you type.</p>
+<div class="st" id="st">Connecting…</div>
+<div id="list"><p class="empty">Loading structures. If nothing shows, add the first one below.</p></div>
+<div class="card"><div class="hd"><label style="flex:1">New structure point #<input id="newpt" inputmode="numeric" placeholder="e.g. 12261"></label><label>Kind<select id="newkind"><option>Storm MH</option><option>Sanitary MH</option><option>Curb inlet</option><option>Grate inlet</option><option>Combo inlet</option></select></label><button id="add" type="button">Add structure</button></div></div>
+</div>
+<script>
+const DIRS=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+const LIDS=["","Concentric"].concat(DIRS.map(x=>"Eccentric "+x));
+const st=document.getElementById("st"), list=document.getElementById("list");
+let db=null, docs={}, timers={}, pend={};
+function say(t,bad){st.textContent=t;st.className="st"+(bad?" bad":"")}
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+const isInlet=d=>/inlet/i.test(d.desc||"");
+function missing(d){const m=[];if(isInlet(d)?!(d.box_l_ft&&d.box_w_ft):!d.dia_ft&&!d.size)m.push("structure size");(d.pipes||[]).forEach(p=>{if(!p.size&&!(p.invert&&p.top&&p.wall))m.push(p.dir+" size");if(!p.invert&&!p.top)m.push(p.dir+" measure-down")});return m}
+const opt=(arr,v)=>arr.map(o=>`<option${o===(v||"")?" selected":""}>${o}</option>`).join("");
+function render(){
+  const ids=Object.keys(docs).sort();
+  if(!ids.length){list.innerHTML='<p class="empty">No structures yet. Add the first one below.</p>';return}
+  if(document.activeElement&&document.activeElement.dataset.k)return; // don't redraw under the viewer's cursor
+  list.innerHTML=ids.map(id=>{const d=docs[id],m=missing(d),inl=isInlet(d);return `<section class="card" data-id="${id}">
+   <div class="hd"><h2>${inl?"Inlet":"MH"} ${esc(d.point||id)}</h2><span class="miss">${m.length?"Missing: "+esc(m.join(", ")):"Complete"}</span></div>
+   <div class="grid">
+    <label>Description<input data-k="desc" value="${esc(d.desc)}"></label>
+    ${inl?`<label>Box L (ft, along E-W)<input class="num" data-k="box_l_ft" inputmode="decimal" value="${esc(d.box_l_ft)}"></label>
+    <label>Box W (ft)<input class="num" data-k="box_w_ft" inputmode="decimal" value="${esc(d.box_w_ft)}"></label>
+    <label>Opening side<select data-k="opening_side">${opt([""].concat(DIRS),d.opening_side)}</select></label>`
+    :`<label>Diameter (ft)<input class="num" data-k="dia_ft" inputmode="decimal" value="${esc(d.dia_ft)}"></label>
+    <label>Lid<select data-k="lid">${opt(LIDS,d.lid||d.ecc)}</select></label>`}
+    <label>Structure type<input data-k="type" value="${esc(d.type)}" placeholder="only if seen/known"></label>
+    <label>Grade rings<input data-k="grade" value="${esc(d.grade)}" placeholder="5 rings, 0.90 ft"></label>
+    <label>I/center structure<input class="num" data-k="cntr" inputmode="decimal" value="${esc(d.cntr)}"></label>
+    <label>Photo: field N is<select data-k="photo_orient">${opt(["","up in photo","unknown"],d.photo_orient)}</select></label>
+   </div>
+   <div class="pipes">${(d.pipes||[]).map((p,i)=>`<div class="pipe" data-i="${i}">
+     <span class="dir">${esc(p.dir)}</span>
+     <label>Invert<input class="num" data-k="p.invert" inputmode="decimal" value="${esc(p.invert)}"></label>
+     <label>Top (out)<input class="num" data-k="p.top" inputmode="decimal" value="${esc(p.top)}"></label>
+     <label>Wall (ft)<input class="num" data-k="p.wall" inputmode="decimal" value="${esc(p.wall)}"></label>
+     <label>Size (in)<input class="num" data-k="p.size" inputmode="decimal" value="${esc(p.size)}"></label>
+     <label>Type<input data-k="p.type" value="${esc(p.type)}" placeholder="RCP/PVC"></label>
+     <label>Drop<select data-k="p.drop">${opt(["","No","Yes"],p.drop)}</select></label>
+     <label>Sticks in (in)<input class="num" data-k="p.proj" inputmode="decimal" value="${esc(p.proj)}"></label>
+     <button class="x" type="button" data-del="${i}" aria-label="Remove ${esc(p.dir)} pipe">✕</button></div>`).join("")}
+    <div class="hd"><select data-newdir aria-label="Pipe direction">${opt(DIRS,"N")}</select><button type="button" data-addpipe>Add pipe</button></div>
+   </div>
+   <label>Other notes<textarea data-k="notes" rows="2">${esc(d.notes)}</textarea></label>
+  </section>`}).join("");
+}
+// write only the fields this viewer changed, so a stale page can't overwrite someone else's values
+function save(id,field){(pend[id]=pend[id]||{})[field]=true;clearTimeout(timers[id]);timers[id]=setTimeout(async()=>{
+  const patch={};Object.keys(pend[id]).forEach(f=>patch[f]=structuredClone(docs[id][f]??null));delete pend[id];
+  try{say("Saving…");const ref=db.collection("manholes").doc(id);try{await ref.update(patch)}catch(e){await ref.set(structuredClone(docs[id]))}say("Saved "+new Date().toLocaleTimeString())}
+  catch(e){say("Not saved: "+(e&&e.code||"error")+". Keep the page open and try again.",true)}
+  finally{delete timers[id]}},500)}
+list.addEventListener("input",e=>{const k=e.target.dataset.k;if(!k)return;const id=e.target.closest("[data-id]").dataset.id;const d=docs[id]=structuredClone(docs[id]);
+  if(k.startsWith("p.")){const i=+e.target.closest("[data-i]").dataset.i;d.pipes[i][k.slice(2)]=e.target.value;save(id,"pipes")}else{d[k]=e.target.value;save(id,k)}});
+list.addEventListener("focusout",()=>setTimeout(()=>{if(!document.activeElement||!document.activeElement.dataset.k)render()},50));
+list.addEventListener("click",e=>{const c=e.target.closest("[data-id]");if(!c)return;const id=c.dataset.id;
+  if(e.target.matches("[data-addpipe]")){const dir=c.querySelector("[data-newdir]").value;const d=docs[id]=structuredClone(docs[id]);(d.pipes=d.pipes||[]).push({dir});d.pipes.sort((a,b)=>DIRS.indexOf(a.dir)-DIRS.indexOf(b.dir));render();save(id,"pipes")}
+  if(e.target.dataset.del!==undefined){const d=docs[id]=structuredClone(docs[id]);d.pipes.splice(+e.target.dataset.del,1);render();save(id,"pipes")}});
+document.getElementById("add").onclick=async()=>{const pt=document.getElementById("newpt").value.trim();if(!pt||!db)return;if(docs[pt]){say(pt+" already exists.",true);return}
+  docs[pt]={point:pt,desc:document.getElementById("newkind").value,pipes:[]};document.getElementById("newpt").value="";render();
+  try{await db.collection("manholes").doc(pt).set(structuredClone(docs[pt]))}catch(e){say("Not saved: "+(e&&e.code||"error"),true)}};
+(async()=>{
+  db=await claude.use("db");
+  if(!db){say("Can't reach saved data here. Open this page signed in to claude.ai.",true);return}
+  const t=setTimeout(()=>say("Still loading… check your signal.",true),10000);
+  db.collection("manholes").onSnapshot(s=>{clearTimeout(t);s.docs.forEach(x=>{if(!timers[x.id])docs[x.id]=x.data()});say("Synced");render()},
+    e=>{clearTimeout(t);say("Sync stopped ("+(e&&e.code||"error")+"). Reload the page.",true)});
+})();
+</script>
