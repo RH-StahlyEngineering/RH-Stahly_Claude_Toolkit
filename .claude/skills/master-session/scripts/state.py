@@ -40,7 +40,8 @@ UNSORTED = "unsorted"         # the group of issues with no listed area: never f
 # name -> (key field, other fields). Every row is a dict; `add` upserts by key.
 COLLECTIONS = {
     "queue": ("id", ("text", "group", "kind", "state")),      # next items, ranked
-    "running": ("id", ("group", "kind", "deadline", "command")),  # running sessions; `command`: the one it is owed
+    # running sessions; `command`: the one it is owed; `pr`: the PRs it opened (`merged` and `landed` follow them)
+    "running": ("id", ("group", "kind", "deadline", "command", "pr")),
     "prs": ("number", ("line", "rung", "checks", "approved", "head")),  # PRs waiting on RH (merges.py)
     "go": ("group", ("line",)),                               # groups waiting for RH's go
     "frozen": ("group", ("reason",)),                         # frozen groups
@@ -53,6 +54,15 @@ FLAG_DESTS = {("queue", "state"): "item_state", ("running", "command"): "owed_co
 KINDS_HELP = "build (adds a PR, counts against both limits), triage (counts against the session cap) or any other word"
 CAPPED_KINDS = ("build", "triage")  # sessions that work unattended: each takes a place under the session cap
 OWED_KINDS = ("build", "triage", "grill", "wayfinder")  # Pocock routes: the work arrives as a command, the second message
+RETRO = "/mattpocock-skills:retro"  # owed to every landed build session, after its cleanup and before its archive
+RETRO_KINDS = ("build",)
+RETRO_ISSUE = "Retro candidates"    # the repo's pinned issue the master writes the candidates on
+# What the master does with a landed session, in order. `retro` and `candidates` only for a build session.
+LANDED_STEPS = ("cleanup", "retro", "candidates", "archive")
+# Closeout's recorded steps, in order. Its first step, start nothing new, holds from `closeout start` on.
+CLOSEOUT_STEPS = ("question", "fixes", "landed", "handoff", "said")
+CLOSEOUT_LINE = "Closeout done. Compact me or start a new master."
+HANDOFF_DIR = r".scratch\handoffs"  # in the ledger repo
 
 
 class Refused(Exception):
@@ -76,6 +86,9 @@ def new_state(owner=None):
         "digest": [],                # "since I asked" lines
         "limits": {"prs": 5, "sessions": 6, "lowered_sessions": None, "lowered_reason": None},
         "blocked_notified": False,
+        "retro": {"issue": None, "count": 0},  # the Retro candidates issue and how many wait on it for RH
+        "closeout": None,            # {words, started_at, asked, done: {step: note}} from `closeout start` to `closeout end`
+        "handoff_note": None,        # {file, at}: the last handoff note a closeout wrote
     }
 
 
@@ -103,6 +116,11 @@ def _check(state):
             raise ValueError(f"limit '{key}' is not a number")
     if limits.get("lowered_sessions") is not None and not isinstance(limits["lowered_sessions"], int):
         raise ValueError("limit 'lowered_sessions' is not a number")
+    if not isinstance(state["retro"], dict) or not isinstance(state["retro"].get("count"), int):
+        raise ValueError("'retro' is not an object with a count")
+    closeout = state["closeout"]
+    if closeout is not None and not (isinstance(closeout, dict) and isinstance(closeout.get("done"), dict)):
+        raise ValueError("'closeout' is not an object with its done steps")
 
 
 def load(path):
@@ -113,6 +131,8 @@ def load(path):
     state = {**new_state(), **raw}
     if isinstance(raw.get("limits"), dict):
         state["limits"] = {**new_state()["limits"], **raw["limits"]}
+    if isinstance(raw.get("retro"), dict):
+        state["retro"] = {**new_state()["retro"], **raw["retro"]}
     _check(state)
     return state
 
@@ -146,17 +166,24 @@ def room(state):
     """What may start now under the two limits, with the lines that say so."""
     limits = state["limits"]
     prs, pr_limit, cap = len(state["prs"]), limits["prs"], session_cap(limits)
-    working = sum(1 for s in state["running"] if s.get("kind") in CAPPED_KINDS)
-    free = max(0, cap - working)
+    working = sum(1 for s in state["running"] if s.get("kind") in CAPPED_KINDS and not is_landed(s))
+    closing = closeout_next(state) if state["closeout"] else None
+    free = 0 if state["closeout"] else max(0, cap - working)
     pile_full = prs >= pr_limit
     lowered = limits.get("lowered_sessions") is not None
-    lines = [f"PRs waiting on RH: {prs} of {pr_limit}." + (" Start no new building." if pile_full else "")]
+    lines = []
+    if state["closeout"]:
+        lines.append("Closeout is on: start nothing new. Running sessions keep running. The one new session is "
+                     f"closeout's own, for the retro fixes. Next closeout step: {closing or 'none, all done'}.")
+    lines.append(f"PRs waiting on RH: {prs} of {pr_limit}." + (" Start no new building." if pile_full else ""))
     if pile_full:
         lines.append("  Still yours: read-only checks, triage preparation, keeping waiting PRs current.")
     lines.append(f"Sessions working: {working} of {cap}"
                  + (f" (cap lowered from {limits['sessions']}: {limits.get('lowered_reason') or 'no reason given'})"
                     if lowered else "") + ".")
-    if pile_full:
+    if state["closeout"]:
+        why = "no session (closeout)"
+    elif pile_full:
         why = "no build session (PR pile full)"
     elif not free:
         why = "no session (cap reached)"
@@ -164,10 +191,16 @@ def room(state):
         why = _count(free, "session", "sessions")
     lines.append(f"May start now: {why}" + (f"; {_count(free, 'triage session', 'triage sessions')}"
                                             if pile_full and free else "") + ".")
+    landed = [{"id": s.get("id"), "prs": s["pr"], "next": landed_next(s)} for s in landed_sessions(state)]
+    lines += [landed_line(s) + "." for s in landed_sessions(state)]
+    retro = state["retro"]
+    if retro["count"]:
+        lines.append(f"Retro candidates: {retro['count']} on issue #{retro['issue']}. RH sees them at closeout.")
     return {"prs": prs, "pr_limit": pr_limit, "sessions": working, "cap": cap,
             "lowered_reason": limits.get("lowered_reason") if lowered else None,
             "build_starts": 0 if pile_full else free, "other_starts": free, "lines": lines,
-            "owed": [{"id": s.get("id"), "command": s.get("command")} for s in owed_commands(state)]}
+            "owed": [{"id": s.get("id"), "command": s.get("command")} for s in owed_commands(state)],
+            "landed": landed, "closeout": closing, "closeout_on": bool(state["closeout"])}
 
 
 def owed_commands(state):
@@ -180,6 +213,183 @@ def owed_commands(state):
 
 def owed_line(session):
     return f"Command not sent: {session.get('id')} is owed `{session.get('command')}`"
+
+
+# --- landed sessions and closeout --------------------------------------------
+
+def is_landed(session):
+    """True once every PR the session recorded is merged. A row with no `pr` (a session with no PR, or one
+    written by a master on the older skill text) never lands: archiving it stays a question to RH."""
+    prs = session.get("pr")
+    return bool(prs) and isinstance(prs, list) and set(prs) <= set(session.get("merged") or [])
+
+
+def landed_sessions(state):
+    return [s for s in state["running"] if is_landed(s)]
+
+
+def landed_next(session):
+    """The landed session's next step: the first of LANDED_STEPS not done."""
+    done = session.get("landed") or []
+    steps = LANDED_STEPS if session.get("kind") in RETRO_KINDS else ("cleanup", "archive")
+    return next(step for step in steps if step not in done)
+
+
+def _prs(numbers):
+    return ("PR " if len(numbers) == 1 else "PRs ") + " ".join(f"#{n}" for n in numbers)
+
+
+def landed_line(session):
+    return f"Landed: {session.get('id')} ({_prs(session['pr'])} merged), next: {landed_next(session)}"
+
+
+def mark_merged(state, number):
+    """Record that PR `number` is merged on each running session that opened it. Returns one line per such
+    session: that it has landed, or how many of its PRs are still open."""
+    said = []
+    for session in state["running"]:
+        prs = session.get("pr")
+        if not isinstance(prs, list) or number not in prs:
+            continue
+        was = is_landed(session)
+        session["merged"] = sorted({*(session.get("merged") or []), number})
+        if is_landed(session):
+            said.append(f"session {session.get('id')} has landed, next: {landed_next(session)}"
+                        + ("" if was else f" (its steps are yours, in order: {', '.join(LANDED_STEPS)})"))
+        else:
+            left = [n for n in prs if n not in session["merged"]]
+            said.append(f"session {session.get('id')} has not landed yet: {_prs(left)} still open")
+    return said
+
+
+def landed_reason(state, session):
+    """What the master does now for a landed session, and how it records it."""
+    sid, step, run = session.get("id"), landed_next(session), f"{RUN}state.py"
+    more = len(landed_sessions(state)) - 1
+    head = (f"session {sid} has landed ({_prs(session['pr'])} merged) and its next step is yours, untouched"
+            + (f" ({more} more landed after it)" if more > 0 else "") + ": ")
+    if step == "cleanup":
+        return head + (
+            "confirm its cleanup: its worktree, its local branches and the merged remote branch are gone "
+            f"(the after-merge rule). All gone: `{run} landed {sid} cleanup`. Something left: tell the session to "
+            "clean it up and report, then end your turn; its turn-end note brings you back.")
+    if step == "retro":
+        return head + (
+            f"send it `{RETRO}` through peer-slash as the whole message, confirm it ran "
+            f"(references/pocock-flow.md, Sending), then `{run} running sent {sid}`. The session reports its "
+            "candidates to you and implements nothing.")
+    if step == "candidates":
+        return head + (
+            f"write the candidates its retro reported on the pinned \"{RETRO_ISSUE}\" issue (one line each with the "
+            "session and the date; a repeat raises that line's count), then "
+            f"`{run} landed {sid} candidates <how many> --issue <the issue's number>`. No report yet: end your turn; "
+            "its turn-end note brings you back. None of this is a question to RH.")
+    return head + (
+        f"archive it without asking RH (`archive_session`), move its roster row to Archive, then "
+        f"`{run} landed {sid} archived --title \"<its title>\"`: that adds the digest line.")
+
+
+def closeout_next(state):
+    """The first closeout step not recorded done, or None when all are (or closeout is off)."""
+    if not state["closeout"]:
+        return None
+    return next((step for step in CLOSEOUT_STEPS if step not in state["closeout"]["done"]), None)
+
+
+def closeout_verdict(state):
+    """The Stop decision while closeout is on: its next step, ahead of the queue."""
+    step, run, retro = closeout_next(state), f"{RUN}state.py", state["retro"]
+    if step is None:
+        return {"decision": "allow", "why": "closeout done"}
+    head = f"Master session: Closeout is on and its next step is yours ({step}): "
+    if step == "question":
+        asked = [q for q in [state["question"], *state["displaced"]] if q and q.get("closeout")]
+        if state["question"] and asked:
+            return {"decision": "allow", "why": "closeout waits on RH's retro answer"}
+        if state["closeout"].get("asked"):
+            return {"decision": "refuse", "reason": head + (
+                f"RH answered the retro question. Record his answer on the \"{RETRO_ISSUE}\" issue, "
+                f"then `{run} closeout done question`.")}
+        how = "ask --closeout --displace" if state["question"] else "ask --closeout"
+        return {"decision": "refuse", "reason": head + (
+            f"ask RH ONE question that lists the retro candidates on issue #{retro['issue']} "
+            f"({retro['count']} recorded), each repeat as one line with its count, with your pick of the ones to fix. "
+            f"Record it with `{run} {how} --short ... --explain ... --explain-short ... --pick ...`, then end your "
+            f"turn. No candidates on the issue: `{run} closeout done question --skip \"no candidates\"`.")}
+    if step == "fixes":
+        return {"decision": "refuse", "reason": head + (
+            "start ONE new sub-session for the retro fixes RH chose: pointer brief with the chosen list and the "
+            f"\"{RETRO_ISSUE}\" issue, \"Received.\", then its route's command (references/pocock-flow.md). Build "
+            f"nothing here or in a landed session. Then `{run} closeout done fixes --session <its id>`. "
+            f"RH chose none: `{run} closeout done fixes --skip \"<why>\"`.")}
+    if step == "landed":
+        landed = landed_sessions(state)
+        if landed:
+            return {"decision": "refuse", "reason": "Master session: Closeout, finish every landed session: "
+                    + landed_reason(state, landed[0])}
+        return {"decision": "refuse", "reason": head + f"no landed session is left. Record it: `{run} closeout done landed`."}
+    if step == "handoff":
+        return {"decision": "refuse", "reason": head + (
+            "bring the state file and the ledger up to date, then write the handoff note in the ledger repo at "
+            f"`{HANDOFF_DIR}\\<date>-<time>.md`: paste what `{run} handoff` prints and fill in each TO ADD line. "
+            f"Then `{run} closeout done handoff --file <the note's path>`.")}
+    return {"decision": "refuse", "reason": head + (
+        f"end with the one line `{CLOSEOUT_LINE}` and record it with `{run} closeout done said`.")}
+
+
+def handoff_text(state, now=None):
+    """The state-derived part of the handoff note, as Markdown. TO ADD lines are the master's to fill in."""
+    now = now or datetime.now().isoformat(timespec="minutes")
+
+    def part(title, lines, to_add=None):
+        return [f"## {title}", "", *(lines or ["None."]), *([f"TO ADD: {to_add}"] if to_add else []), ""]
+
+    running = []
+    for s in state["running"]:
+        bits = [str(s.get("group") or "no group"), str(s.get("kind") or "no kind")]
+        if isinstance(s.get("pr"), list) and s["pr"]:
+            bits.append(_prs(s["pr"]))
+        if is_landed(s):
+            bits.append(f"landed, next: {landed_next(s)}")
+        if s.get("command") and not s.get("command_sent"):
+            bits.append(f"command not sent: {s['command']}")
+        if s.get("deadline"):
+            bits.append(f"time box until {s['deadline']}")
+        running.append(f"- {s.get('id')}: {', '.join(bits)}. TO ADD: last verified state, with the time")
+    question = []
+    if state["question"]:
+        q = state["question"]
+        question = [f"- {q.get('short')} (asked {q.get('asked_at')}; pick: {q.get('recommendation') or 'none given'})"]
+        question += [f"- comes back after it: {old.get('short')}" for old in reversed(state["displaced"])]
+    out = [f"# Master session handoff, {now}", "",
+           f"Owner: {state['owner']}. Paused: {'yes' if state['paused'] else 'no'}. "
+           "Printed from the state file; the TO ADD lines are filled in by the master that wrote this note.", ""]
+    out += part("Running", running)
+    out += part("Waiting on RH", [f"- {line}" for line in waiting_on_rh(state)])
+    out += part("Open question", question)
+    out += part("Monitors and timers to re-arm",
+                [f"- time box of {s.get('id')} until {s['deadline']}" for s in state["running"] if s.get("deadline")],
+                "every other timer, monitor or scheduled task you set, with what it watches; or \"none\"")
+    hand = state.get("handover")
+    out += part("RH's hand-over words",
+                [f"- \"{hand.get('words')}\" ({hand.get('at')}), role taken from {hand.get('from') or 'no one'}"]
+                if hand else [],
+                "his words naming the next master, word for word with the time; or \"none\"")
+    retro = state["retro"]
+    out += part("Retro candidates", [f"- {retro['count']} waiting on issue #{retro['issue']}"] if retro["issue"] else [])
+    out += part("Since I asked (digest not yet delivered)", [f"- {line}" for line in state["digest"]])
+    out += part("Frozen groups", [f"- {f.get('group')}: {f.get('reason')}" for f in state["frozen"]])
+    out += part("Job asks", [f"- {j.get('line') or j.get('id')}" for j in state["jobs"]])
+    limits = state["limits"]
+    lowered = (f"; session cap lowered to {limits['lowered_sessions']}: {limits.get('lowered_reason')}"
+               if limits.get("lowered_sessions") is not None else "")
+    out += part("Limits", [f"- PRs {limits['prs']}, sessions {limits['sessions']}{lowered}"])
+    closeout = state["closeout"]
+    if closeout:
+        done = ", ".join(f"{step} ({note})" for step, note in closeout["done"].items()) or "none"
+        out += part("Closeout", [f"- started {closeout.get('started_at')} on RH's words \"{closeout.get('words')}\"; "
+                                 f"done: {done}; next: {closeout_next(state) or 'none'}"])
+    return "\n".join(out)
 
 
 def disk_report(path, lowered):
@@ -270,7 +480,7 @@ def decide(state, message):
         return {"decision": "allow", "why": "paused"}
     if message.get("stop_hook_active"):
         return {"decision": "allow", "why": "already sent back this turn"}
-    owed = owed_commands(state)
+    owed = [s for s in owed_commands(state) if not is_landed(s)]  # a landed session's retro is its own step, below
     if owed:
         first = owed[0]
         more = f" ({len(owed) - 1} more after it)" if len(owed) > 1 else ""
@@ -281,6 +491,11 @@ def decide(state, message):
             f"`{RUN}state.py running sent {first.get('id')}`. Its start turn still runs: end your turn; "
             "its turn-end note brings you back."
         )}
+    if state["closeout"]:
+        return closeout_verdict(state)
+    landed = landed_sessions(state)
+    if landed:
+        return {"decision": "refuse", "reason": "Master session: " + landed_reason(state, landed[0])}
     steps = untouched_steps(state)
     if steps:
         step = steps[0]
@@ -389,6 +604,15 @@ def apply(state, args):
         state["paused"] = True
     elif cmd == "resume":
         state["paused"] = False
+    elif cmd == "retro":
+        if args.issue is not None:
+            state["retro"]["issue"] = _pr_number(args.issue)
+        if args.count is not None:
+            state["retro"]["count"] = args.count
+    elif cmd == "landed":
+        _landed_step(state, args)
+    elif cmd == "closeout":
+        _closeout(state, args)
     elif cmd == "ask":
         if state["question"] and not (args.displace or args.replace):
             raise Refused(
@@ -402,6 +626,11 @@ def apply(state, args):
         state["question"] = {"short": args.short, "explain": explain or args.short, "explain_short": explain_short,
                              "recommendation": args.pick,
                              "asked_at": args.at or datetime.now().isoformat(timespec="seconds")}
+        if args.closeout:
+            if not state["closeout"]:
+                raise Refused("closeout is not on: it starts only on RH's word, with `closeout start --words ...`")
+            state["question"]["closeout"] = True
+            state["closeout"]["asked"] = True
         missing = [flag for flag, text in (("--explain", explain), ("--explain-short", explain_short)) if not text]
         if missing:  # recorded all the same: a master on the older wording must not be stopped
             args.said = (f"Recorded, but missing: {' and '.join(missing)}. The panel shows RH both explanations, in "
@@ -445,11 +674,25 @@ def apply(state, args):
         rows = state[cmd]
         if cmd == "prs" and args.action in ("add", "drop"):
             args.key = str(_pr_number(args.key))
+        if cmd == "prs" and args.action == "drop" and not args.closed:
+            landed = mark_merged(state, int(args.key))  # dropped after its merge: the session that built it lands
+            if landed:
+                args.said = f"PR #{args.key} merged: " + "; ".join(landed) + "."
+        if cmd == "running" and args.action == "drop":
+            gone = next((r for r in rows if str(r.get(key)) == args.key), None)
+            if gone and is_landed(gone):
+                raise Refused(
+                    f"session {args.key} has landed and its steps are not done (next: {landed_next(gone)}). It leaves "
+                    f"the list with `landed {args.key} archived --title \"<its title>\"`, after its steps; a session "
+                    "that is gone: add `--skip \"<why>\"`.")
         if args.action == "add":
             value = int(args.key) if cmd == "prs" else args.key
             # `--state` on `queue add` is parsed as item_state: the file option owns `state`.
             flags = {f: getattr(args, FLAG_DESTS.get((cmd, f), f)) for f in fields}
             given = {f: v for f, v in flags.items() if v is not None}
+            if cmd == "running" and "pr" in given:  # the PRs it opened: each `--pr` adds one
+                had = next((r.get("pr") for r in rows if str(r.get(key)) == args.key), None)
+                given["pr"] = sorted({*(had if isinstance(had, list) else []), *(_pr_number(n) for n in given["pr"])})
             if cmd == "queue" and not any(str(r.get(key)) == args.key for r in rows):
                 if "kind" not in given:
                     raise Refused(f"a new queue item needs --kind: {KINDS_HELP}")
@@ -479,6 +722,8 @@ def apply(state, args):
                 raise Refused(f"no running session '{args.key}' is recorded: `running add {args.key} ...` first")
             if row.get("command"):
                 row["command_sent"] = True
+                if is_landed(row) and row["command"] == RETRO and "cleanup" in (row.get("landed") or []):
+                    row["landed"] = [*row["landed"], "retro"] if "retro" not in row["landed"] else row["landed"]
             else:
                 args.said = f"Session {args.key} has no owed command recorded: nothing to confirm."
         elif args.action == "drop":
@@ -495,6 +740,109 @@ def apply(state, args):
             state[cmd] = new_rows
     if cmd != "idle":
         state["nothing_needed_said"] = None
+
+
+def _landed_step(state, args):
+    """Record one step of a landed session, in order. Raises Refused."""
+    sid = args.key
+    row = next((r for r in state["running"] if str(r.get("id")) == sid), None)
+    if row is None:
+        raise Refused(f"no running session '{sid}' is recorded")
+    if not is_landed(row):
+        raise Refused(
+            f"session {sid} has not landed: its PR is not merged, or it recorded none (`running add {sid} --pr <n>`). "
+            "Archiving a session whose PR is not merged, or that still has work, is a question to RH (Archive offer).")
+    step = "archive" if args.step == "archived" else args.step
+    done, due = row.setdefault("landed", []), landed_next(row)
+    if step == "archive" and args.skip:  # the session is gone: its remaining steps cannot run
+        state["running"] = [r for r in state["running"] if r is not row]
+        state["digest"].append(f"archived: {args.title} (steps skipped: {args.skip})")
+        return
+    if step in done:
+        raise Refused(f"session {sid}: {step} is already recorded; its next step is {due}")
+    if step == "candidates" and row.get("kind") not in RETRO_KINDS:
+        raise Refused(f"session {sid} owes no retro: only a build session gets one. Its next step is {due}.")
+    if step != due:
+        how = (f"send it `{RETRO}` and confirm it ran: `running sent {sid}`" if due == "retro"
+               else f"`landed {sid} {due}" + (" <how many>`" if due == "candidates" else "`"))
+        raise Refused(f"session {sid}: {due} comes first ({how}). The steps go in order: {', '.join(LANDED_STEPS)}.")
+    if step == "cleanup":
+        done.append("cleanup")
+        if row.get("kind") in RETRO_KINDS:  # owed like a route command: named until `running sent`
+            row["command"], row["command_sent"] = RETRO, False
+            args.said = (f"Cleanup recorded. Session {sid} is owed `{RETRO}`: send it through peer-slash as the "
+                         f"whole message, confirm it ran, then `running sent {sid}`.")
+    elif step == "candidates":
+        if args.n is None or args.n < 0:
+            raise Refused(f"say how many candidates its retro reported: `landed {sid} candidates <n>` (0 for none)")
+        if args.issue is not None:
+            state["retro"]["issue"] = _pr_number(args.issue)
+        if args.n and state["retro"]["issue"] is None:
+            raise Refused(
+                f"the candidates go on the repo's pinned \"{RETRO_ISSUE}\" issue first (none yet: create it with that "
+                f"title and pin it), then name it once: `landed {sid} candidates {args.n} --issue <its number>`")
+        state["retro"]["count"] += args.n
+        done.append("candidates")
+    else:
+        if not args.title:
+            raise Refused(f"give the session's title for the digest line: `landed {sid} archived --title \"<title>\"`")
+        state["running"] = [r for r in state["running"] if r is not row]
+        state["digest"].append(f"archived: {args.title}")
+
+
+def _closeout(state, args):
+    """Start closeout, record one of its steps in order, or end it. Raises Refused."""
+    if args.action == "start":
+        if state["closeout"]:
+            args.said = f"Closeout is already on. Next step: {closeout_next(state) or 'none, all done'}."
+            return
+        state["closeout"] = {"words": args.words, "started_at": args.at or datetime.now().isoformat(timespec="seconds"),
+                             "asked": False, "done": {}}
+        args.said = ("Closeout is on: start nothing new; running sessions keep running. Steps, in order, each "
+                     "recorded with `closeout done <step>`: question (one retro question to RH, with your pick), "
+                     "fixes (one new sub-session for what he chose), landed (every landed session finished), "
+                     "handoff (state and ledger current, the handoff note written), said (the one closing line).")
+        return
+    if args.action == "end":
+        state["closeout"] = None
+        return
+    if not state["closeout"]:
+        raise Refused("closeout is not on: it starts only on RH's word, with `closeout start --words ...`")
+    step, due = args.step, closeout_next(state)
+    if step != due:
+        raise Refused(f"closeout step {step} is " + ("already recorded" if step in state["closeout"]["done"]
+                      else "not next") + f"; the next step is {due or 'none: all are done'}.")
+    note = "done"
+    if step == "question":
+        if any(q.get("closeout") for q in [state["question"], *state["displaced"]] if q):
+            raise Refused("the retro question is still open: RH has not answered it. After his answer: `answered`, "
+                          f"his answer recorded on the \"{RETRO_ISSUE}\" issue, then this.")
+        if args.skip:
+            note = f"skipped: {args.skip}"
+        elif not state["closeout"].get("asked"):
+            raise Refused("the retro question was not asked (`ask --closeout ...`). No candidates to ask about: "
+                          "`closeout done question --skip \"no candidates\"`.")
+        else:
+            state["retro"]["count"] = 0  # RH has seen them; his answer is on the issue
+    elif step == "fixes":
+        if bool(args.session_id) == bool(args.skip):
+            raise Refused("name the one sub-session started for the fixes (`closeout done fixes --session <id>`), "
+                          "or why none was (`--skip \"<why>\"`)")
+        note = f"session {args.session_id}" if args.session_id else f"skipped: {args.skip}"
+    elif step == "landed":
+        left = landed_sessions(state)
+        if left:
+            raise Refused("landed sessions are not finished: " + "; ".join(landed_line(s) for s in left)
+                          + ". Finish each (cleanup, retro, candidates, archive), then this.")
+    elif step == "handoff":
+        if not args.file or not Path(args.file).is_file():
+            raise Refused(f"the handoff note is not there: {args.file or 'no --file given'}. Write it in the ledger "
+                          f"repo under {HANDOFF_DIR} from `handoff`'s output, then `closeout done handoff --file <path>`.")
+        note = str(args.file)
+        state["handoff_note"] = {"file": str(args.file), "at": datetime.now().isoformat(timespec="seconds")}
+    state["closeout"]["done"][step] = note
+    if step == "said":
+        args.said = "Closeout recorded done. After the compact, or as the new master: read the state file and the handoff note, then `closeout end`."
 
 
 def write_command(path, session, args):
@@ -515,6 +863,8 @@ def write_command(path, session, args):
                 "after his hand-over run `take --words \"<his words>\"`.")
         if state is None or args.fresh:
             state = new_state()
+        if owner != session:
+            state["closeout"] = None  # a new owner starts past the old master's closeout; its handoff note stays
         if cmd == "take":
             state["handover"] = {"words": args.words, "at": args.at or datetime.now().isoformat(timespec="seconds"),
                                  "from": owner}
@@ -564,6 +914,29 @@ def build_parser():
 
     sub.add_parser("stop", help="decide a stop: the app's Stop message on stdin, a JSON verdict out")
     sub.add_parser("show", help="print the state (anyone may read)")
+    sub.add_parser("handoff", help="print the state-derived part of the handoff note, as Markdown (anyone may read)")
+    p = sub.add_parser("retro", help="the Retro candidates issue and how many candidates wait on it")
+    p.add_argument("--issue", help="the pinned issue's number")
+    p.add_argument("--count", type=int, help="set the count to match the issue")
+    p = sub.add_parser("landed", help="record one step of a landed session, in order: cleanup, (retro: `running "
+                                      "sent`), candidates, archived")
+    p.add_argument("key", metavar="SESSION")
+    p.add_argument("step", choices=("cleanup", "candidates", "archived"))
+    p.add_argument("n", type=int, nargs="?", help="candidates: how many its retro reported (0 for none)")
+    p.add_argument("--issue", help="candidates: the Retro candidates issue's number (once)")
+    p.add_argument("--title", help="archived: the session's title, for the digest line")
+    p.add_argument("--skip", metavar="WHY", help="archived: the session is gone and its remaining steps cannot run")
+    p = sub.add_parser("closeout", help="the fixed process before a compact or a new master; starts only on RH's word")
+    osub = p.add_subparsers(dest="action", required=True)
+    op = osub.add_parser("start", help="RH said to close out")
+    op.add_argument("--words", required=True, help="RH's message, word for word")
+    op.add_argument("--at", help="when he said it (default: now)")
+    op = osub.add_parser("done", help="record a closeout step, in order")
+    op.add_argument("step", choices=CLOSEOUT_STEPS)
+    op.add_argument("--session", dest="session_id", metavar="ID", help="fixes: the one sub-session started for them")
+    op.add_argument("--skip", metavar="WHY", help="question: no candidates; fixes: RH chose none")
+    op.add_argument("--file", help="handoff: the note's path")
+    osub.add_parser("end", help="after the compact: clear the closeout mark")
     sub.add_parser("blocked", help="whether every remaining step waits on RH, the line that tells him, and whether to send it")
     p = sub.add_parser("room", help="what may start now under the two limits (anyone may read)")
     p.add_argument("--json", action="store_true", help="the counts as JSON instead of lines")
@@ -591,6 +964,7 @@ def build_parser():
     over.add_argument("--displace", action="store_true",
                       help="a hard stop goes ahead of the open question, which is kept and comes back on `answered`")
     over.add_argument("--replace", action="store_true", help="the open question, reworded")
+    p.add_argument("--closeout", action="store_true", help="closeout's one retro question")
     sub.add_parser("answered", help="RH answered: the question it displaced is open again, else none is")
     p = sub.add_parser("idle", help="record that you told RH `Nothing needs you: <text>`")
     p.add_argument("text")
@@ -624,13 +998,20 @@ def build_parser():
             elif (name, field) == ("running", "command"):
                 add.add_argument("--command", dest="owed_command", metavar="LINE",
                                  help="the slash command line this session is owed as its second message, e.g. "
-                                      '"/mattpocock-skills:tdd #593"; none for a mechanical session')
+                                      '"/mattpocock-skills:implement #593"; none for a mechanical session')
+            elif (name, field) == ("running", "pr"):
+                add.add_argument("--pr", action="append", metavar="N",
+                                 help="a PR this session opened; repeat for more, a later call adds to them")
             else:
                 add.add_argument(f"--{field}")
         if name == "running":
             csub.add_parser("sent", help="the session's owed command is confirmed run").add_argument(
                 "key", metavar=key.upper())
-        csub.add_parser("drop", help="remove a row").add_argument("key", metavar=key.upper())
+        drop = csub.add_parser("drop", help="remove a row")
+        drop.add_argument("key", metavar=key.upper())
+        if name == "prs":
+            drop.add_argument("--closed", action="store_true",
+                              help="closed without a merge: the session that opened it does not land")
         csub.add_parser("clear", help="remove every row")
         csub.add_parser("set", help="replace all rows with the JSON list on stdin")
     return parser
@@ -682,6 +1063,13 @@ def run(args, stdin):
             now["lines"].append(now["disk"]["line"])
         now["lines"] += [f"{owed_line(s)}. Send it, confirm it ran, then: running sent {s['id']}." for s in now["owed"]]
         print(json.dumps(now, ensure_ascii=False) if args.json else "\n".join(now["lines"]))
+        return 0
+    if args.command == "handoff":
+        try:
+            print(handoff_text(load(path)))
+        except (OSError, ValueError, KeyError, TypeError) as err:
+            print(f"state file {path} is missing or damaged ({err})", file=sys.stderr)
+            return 1
         return 0
     if args.command == "show":
         try:

@@ -21,6 +21,8 @@ Freeze: a group is frozen while an issue in it needs a grill, while a grill sess
 another group or as a quick win; one with an open grill gets no second grill row. `unsorted` is never
 frozen. Grill rows come with the one that unfreezes the most ready issues first, then by group rank.
 
+A landed session (every PR it recorded is merged) is printed under LANDED with its next step, and no longer
+holds its group. While closeout is on, a CLOSEOUT line says so and nothing new starts.
 A running session whose owed command is not confirmed run (`running add ... --command`, until `running sent`)
 is printed first, under COMMAND NOT SENT. A group with a running session gets no build, go or triage row. A plan row whose state the master
 changed (`blocked`: RH said not now) and every row the master added itself are kept as they are.
@@ -109,7 +111,7 @@ def _held_question(number, issue):
 
 def plan_rows(plan, state, area_paths, merged):
     """The queue, go and frozen rows this plan calls for, given what the state says is running or declined."""
-    running = {s.get("group") for s in state["running"]}
+    running = {s.get("group") for s in state["running"] if not store.is_landed(s)}  # a landed session works no longer
     triaging = any(s.get("kind") == "triage" for s in state["running"])
     before = {r["id"]: r for r in state["queue"] if str(r.get("id", "")).startswith(PLAN_ROWS)}
     own = [r for r in state["queue"] if not str(r.get("id", "")).startswith(PLAN_ROWS)]
@@ -251,7 +253,7 @@ def plan_rows(plan, state, area_paths, merged):
     return {"queue": own + queue, "go": go, "frozen": frozen}, briefs
 
 
-def render(plan, rows, briefs, state_path, owed=()):
+def render(plan, rows, briefs, state_path, owed=(), landed=(), closeout=None):
     """The lead list: commands owed to started sessions, what is the master's to start, what to ask RH and in which order."""
     def line(row):
         return f"  {row['id']}  {briefs.get(row['id']) or row.get('text') or ''}"[:planner.PRINT_WIDTH]
@@ -264,6 +266,14 @@ def render(plan, rows, briefs, state_path, owed=()):
         lines.append(f"COMMAND NOT SENT  {len(owed)} (send each through peer-slash, confirm it ran, then "
                      "state.py running sent <session>)")
         lines += [f"  {s.get('id')}  {s.get('command')}"[:planner.PRINT_WIDTH] for s in owed]
+    if landed:  # merged: the session's steps are the master's own, in order, with no ask to RH
+        lines.append(f"LANDED  {len(landed)} (yours to finish, in order: {', '.join(store.LANDED_STEPS)}; "
+                     "state.py landed <session> <step>)")
+        lines += [f"  {s.get('id')}  {store.landed_line(s).split('(', 1)[1].replace(' merged)', ' merged')}"
+                  [:planner.PRINT_WIDTH] for s in landed]
+    if closeout is not None:
+        lines.append(f"CLOSEOUT  on, next step: {closeout[0] or 'none, all done'}. Start nothing new: the rows below "
+                     "wait.")
     lines.append(f"START NOW  {len(mine)} (yours to take; a build only under the limits)")
     lines += [line(r) for r in mine]
     lines.append(f"ASK RH  {len(asks)}, one at a time, in this order (full question: {store.RUN}state.py show)")
@@ -324,7 +334,8 @@ def main(argv=None, gh=planner.real_gh):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     limits = "\n".join([f"LIMITS  before any start ({store.RUN}state.py room)", *(f"  {line.strip()}" for line in store.room(state)["lines"])])
-    sys.stdout.write(planner.render(plan) + render(plan, rows, briefs, path, store.owed_commands(state)) + limits + "\n")
+    sys.stdout.write(planner.render(plan) + render(plan, rows, briefs, path, store.owed_commands(state), store.landed_sessions(state),
+                                                 (store.closeout_next(state),) if state["closeout"] else None) + limits + "\n")
     return 0
 
 

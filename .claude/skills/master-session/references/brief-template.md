@@ -45,6 +45,8 @@ Rules for this session:
   4. Permanent deletes: files, DB rows, branches with unmerged work, emptied trash.
   5. Force pushes and other history rewrites.
   6. Anything another session was denied.
+- PRs: when you open one, send Master one line: "PR opened: #<n>". After it merges, remove your worktree, your local branches and the merged remote branch, and tell Master.
+- Retro: when Master sends `/mattpocock-skills:retro`, send its candidates to Master with SendMessage and implement none of them.
 - Parallel work: fork yourself only when the thread needs your context; otherwise use a subagent.
 - New sessions: never start one or propose one with a card. Send Master one line: "want session: <title> — <why>". Master asks RH and starts it.
 - Decisions RH makes with you directly: record them at their home (issue comment, ADR, STATE.md), then send Master one line: "RH decided: <gist> — <link>".

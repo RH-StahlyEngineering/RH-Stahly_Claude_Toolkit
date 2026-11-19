@@ -195,6 +195,13 @@ function draw(s, room) {
   main.replaceChildren();
   var limits = s.limits || {};
 
+  if (room.closeout_on) {
+    var retro = s.retro || {};
+    main.append(el("div", "notice", "Closeout is on. Next step: " + (room.closeout || "none, all done") +
+      ". Nothing new starts; running sessions keep running." +
+      (retro.count ? " " + retro.count + " retro candidates on issue #" + retro.issue + "." : "")));
+  }
+
   var q = el("div"); q.id = "question"; main.append(q);
   var head = el("div", "head"); q.append(head);
   head.append(el("h2", null, "Your open question"));
@@ -229,12 +236,17 @@ function draw(s, room) {
 
   var running = s.running || [];
   var runBox = section("Running", room.sessions + " of " + room.cap + " working");
+  var landed = {};                 // the store's own answer on which sessions landed and their next step
+  (room.landed || []).forEach(function (l) { landed[l.id] = l; });
   list(runBox, running.map(function (r) {
-    // A row with no command recorded (an older master, a mechanical session) says nothing of it.
-    var owed = r.command && !r.command_sent;
-    return { text: r.id, tags: [r.group, r.kind], warn: owed ? "command not sent" : "",
-             meta: [owed ? "owed: " + r.command : "", r.deadline ? "time box until " + r.deadline : ""]
-               .filter(Boolean).join(" · ") };
+    // A row with no command recorded (an older master, a mechanical session) says nothing of it;
+    // the same for a row with no PR.
+    var owed = r.command && !r.command_sent, done = landed[r.id];
+    var prs = Array.isArray(r.pr) && r.pr.length ? "PR " + r.pr.map(function (n) { return "#" + n; }).join(" ") : "";
+    return { text: r.id, tags: [r.group, r.kind],
+             warn: done ? "landed, next: " + done.next : (owed ? "command not sent" : ""),
+             meta: [prs ? prs + (done ? " merged" : "") : "", owed ? "owed: " + r.command : "",
+                    r.deadline ? "time box until " + r.deadline : ""].filter(Boolean).join(" · ") };
   }), "No session running.");
   if (limits.lowered_sessions != null) {
     runBox.append(el("div", "meta", "Cap lowered from " + limits.sessions + ": " + (limits.lowered_reason || "no reason given")));
