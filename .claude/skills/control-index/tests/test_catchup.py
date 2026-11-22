@@ -47,7 +47,8 @@ def test_new_file_in_folder_is_picked_up(tree, db):
     shutil.copy(src, src.with_name("copy-MRC.jxl"))
     again = index(db, tree)
     assert again["files_read"] >= 1
-    assert any(r["source_path"].endswith("copy-MRC.jxl") for r in search(db)["results"])
+    # copies group under one result (#8): look in every result's sources
+    assert any(s["source_path"].endswith("copy-MRC.jxl") for r in search(db)["results"] for s in r["sources"])
 
 
 def test_deleted_file_records_removed(tree, db):
