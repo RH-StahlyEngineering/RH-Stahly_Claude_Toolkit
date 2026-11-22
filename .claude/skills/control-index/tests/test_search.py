@@ -59,7 +59,7 @@ def test_bent_and_broken_marks_flagged_not_hidden(search):
 def test_grid_only_point_located_from_job_projection(search):
     # 60R (UV job) is keyed-in grid only, same mark as CP60 (WGS84 stored in MRC job)
     out = search(*CP60)
-    r = by_name(out, "60R")
+    r = next(r for r in out["results"] if "60R" in {s["point_name"] for s in r["sources"]})
     assert r["kind"] == "control"
     assert abs(r["locator"]["lat"] - 48.5051) < 0.0002
     assert abs(r["locator"]["lon"] - -111.8551) < 0.0003
@@ -81,4 +81,6 @@ def test_unparseable_file_listed(search):
 
 def test_tight_radius_keeps_only_the_mark_itself(search):
     # CP 10 is ~0.06 mi south of CP60
-    assert sorted(names(search(*CP60, "--radius", 0.05, "--all"))) == ["60R", "CP60"]
+    out = search(*CP60, "--radius", 0.05, "--all")
+    assert names(out) == ["CP60"]  # 60R is the same mark: grouped into CP60's sources
+    assert sorted(s["point_name"] for s in out["results"][0]["sources"]) == ["60R", "CP60"]
