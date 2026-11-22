@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kinds import classify, condition_flags  # noqa: E402
+from vce import parse_vce  # noqa: E402
 
 LOCATOR_DECIMALS = 4  # ~11 m N-S, ~7 m E-W at Montana latitudes
 LOCATOR_LABEL = "locator only"
@@ -133,9 +134,12 @@ class write:
         self.con.execute("ROLLBACK" if et else "COMMIT")
 
 
+PARSERS = {".jxl": parse_jxl, ".vce": parse_vce}
+
+
 def index_file(con, path):
     try:
-        rows = list(parse_jxl(path))
+        rows = list(PARSERS[os.path.splitext(path)[1].lower()](path))
     except Exception as exc:  # noqa: BLE001 - every parse failure is reported, not hidden
         with write(con):
             con.execute("DELETE FROM records WHERE source_path=?", (path,))
@@ -195,7 +199,7 @@ def cmd_index(args):
                 con.execute("INSERT OR REPLACE INTO folders VALUES (?,?,?)", (dirpath, mtime, "pending"))
             if out_of_time():  # leave this folder pending so coverage shows it
                 break
-            jxls = [os.path.join(dirpath, fn) for fn in files if fn.lower().endswith(".jxl")]
+            jxls = [os.path.join(dirpath, fn) for fn in files if os.path.splitext(fn)[1].lower() in PARSERS]
             forget_missing(con, dirpath, set(jxls))
             for path in jxls:
                 if out_of_time():
