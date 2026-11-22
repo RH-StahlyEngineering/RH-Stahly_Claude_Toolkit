@@ -18,7 +18,8 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kinds import classify, condition_flags  # noqa: E402
-from vce import parse_vce  # noqa: E402
+from exports import Skipped, parse_csv  # noqa: E402
+from vce import Grid, parse_vce, vce_grid  # noqa: E402
 
 LOCATOR_DECIMALS = 4  # ~11 m N-S, ~7 m E-W at Montana latitudes
 LOCATOR_LABEL = "locator only"
@@ -57,7 +58,9 @@ def _f(el, path):
 
 
 def _grid_transformer(root):
-    """pyproj transformer grid(m) -> lon/lat from the job's last ProjectionRecord, or None."""
+    """vce.Grid (grid m -> lat/lon) from the job's last ProjectionRecord, or None. Element names verified on
+    real Lambert2Parallel (Parallel1/2) and TransverseMercator files; LocalSite KeyedInGroundScaleFactor
+    (GroundScaleFactor about ProjectLocation) is undone like a .vce ground scale."""
     projs = root.findall("./FieldBook/ProjectionRecord/Projection")
     proj = next((p for p in reversed(projs) if p.findtext("Type") not in (None, "NotSet")), None)
     if proj is None:
@@ -68,35 +71,48 @@ def _grid_transformer(root):
     if t == "Lambert1Parallel":
         p4 = f"+proj=lcc +lat_1={g('CentralLatitude')} +k_0={g('Scale')} {common}"
     elif t == "Lambert2Parallel":
-        p4 = f"+proj=lcc +lat_1={g('NorthParallel')} +lat_2={g('SouthParallel')} {common}"
+        p4 = f"+proj=lcc +lat_1={g('Parallel1')} +lat_2={g('Parallel2')} {common}"
     elif t == "TransverseMercator":
         p4 = f"+proj=tmerc +k_0={g('Scale')} {common}"
     else:
         return None
-    from pyproj import Transformer
-    return Transformer.from_crs(p4, "EPSG:4326", always_xy=True)
+    site = next((rec.find("LocalSite") for rec in root.findall("./FieldBook/ProjectionRecord")
+                 if proj in list(rec)), None)
+    scale, origin, offset = 1.0, None, False
+    if site is not None and site.findtext("Type") == "KeyedInGroundScaleFactor":
+        scale = _f(site, "GroundScaleFactor") or 1.0
+        lat, lon = _f(site, "ProjectLocationLatitude"), _f(site, "ProjectLocationLongitude")
+        origin = (lat, lon) if lat is not None and lon is not None else None
+        offset = any(_f(site, k) for k in ("NorthingOffset", "EastingOffset",
+                                            "ProjectionOriginNorthingDelta", "ProjectionOriginEastingDelta"))
+    grid = Grid(None, p4, scale, origin)
+    if offset and "scale_unverified" not in grid.flags:
+        grid.flags.append("scale_unverified")  # false N/E offsets on ground coords: not handled
+    return grid
 
 
 def parse_jxl(path):
     root = ET.parse(path).getroot()
     cs = root.find("./FieldBook/CoordinateSystemRecord[SystemName!='']")
     coord_system = " / ".join(filter(None, [cs.findtext("SystemName"), cs.findtext("ZoneName")])) if cs is not None else None
-    tf = None
+    grid = None
     for pt in root.findall("./Reductions/Point"):
+        flags = []
         recorded = pt.findtext("Code") or ""
         lat, lon = _f(pt, "WGS84/Latitude"), _f(pt, "WGS84/Longitude")
         if lat is None:
             n, e = _f(pt, "Grid/North"), _f(pt, "Grid/East")
             if n is None:
                 continue
-            tf = tf or _grid_transformer(root)
-            if tf is None:
+            grid = grid or _grid_transformer(root)
+            if grid is None:
                 continue
-            lon, lat = tf.transform(e, n)
+            lat, lon = grid.to_latlon(n, e)
+            flags = list(grid.flags)
         yield {
             "point_name": pt.findtext("Name"), "recorded": recorded,
             "lat": round(lat, LOCATOR_DECIMALS), "lon": round(lon, LOCATOR_DECIMALS),
-            "coord_system": coord_system, "date": root.get("TimeStamp"),
+            "coord_system": coord_system, "date": root.get("TimeStamp"), "flags": flags,
         }
 
 
@@ -125,12 +141,32 @@ class write:
         self.con.execute("ROLLBACK" if et else "COMMIT")
 
 
-PARSERS = {".jxl": parse_jxl, ".vce": parse_vce}
+def jxl_grid(path):
+    """(grid or None, {name: (N, E) metres}) -- context for CSV exports beside the job."""
+    root = ET.parse(path).getroot()
+    grid = _grid_transformer(root)
+    cs = root.find("./FieldBook/CoordinateSystemRecord[SystemName!='']")
+    name = " / ".join(filter(None, [cs.findtext("SystemName"), cs.findtext("ZoneName")])) if cs is not None else None
+    pts = {pt.findtext("Name"): (_f(pt, "Grid/North"), _f(pt, "Grid/East"))
+           for pt in root.findall("./Reductions/Point") if _f(pt, "Grid/North") is not None}
+    if grid:
+        grid.coord_system = name
+    return grid, pts
+
+
+CONTEXTS = {".vce": vce_grid, ".jxl": jxl_grid}
+PARSERS = {".jxl": parse_jxl, ".vce": parse_vce,
+           ".csv": lambda p: parse_csv(p, CONTEXTS, job_number, LOCATOR_DECIMALS)}
 
 
 def index_file(con, path):
     try:
         rows = list(PARSERS[os.path.splitext(path)[1].lower()](path))
+    except Skipped as exc:
+        with write(con):
+            con.execute("DELETE FROM records WHERE source_path=?", (path,))
+            con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)", (path, "skipped", str(exc)))
+        return
     except Exception as exc:  # noqa: BLE001 - every parse failure is reported, not hidden
         with write(con):
             con.execute("DELETE FROM records WHERE source_path=?", (path,))
@@ -139,14 +175,18 @@ def index_file(con, path):
     job = job_number(path)
     with write(con):
         con.execute("DELETE FROM records WHERE source_path=?", (path,))
+        notes = [r["reason"] for r in rows if "skipped" in r]
         for r in rows:
+            if "skipped" in r:
+                continue
             code, desc = split_code(r["recorded"])
             con.execute(
                 "INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (path, job, r["point_name"], r["recorded"], code, desc,
-                 classify(code, desc), json.dumps(condition_flags(r["recorded"])),
+                 classify(code, desc), json.dumps(condition_flags(r["recorded"]) + r.get("flags", [])),
                  r["lat"], r["lon"], r["coord_system"], r["date"]))
-        con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)", (path, "ok", None))
+        con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)",
+                    (path, "partial", "; ".join(notes)) if notes else (path, "ok", None))
 
 
 def forget_missing(con, dirpath, present):
@@ -353,7 +393,9 @@ def cmd_search(args):
     results = group_duplicates(results)
     results.sort(key=lambda r: (KIND_RANK[r["kind"]], r["distance_mi"] or 0, r["point_name"] or ""))
     failed = [{"source_path": p, "error": e} for p, e in con.execute("SELECT source_path, error FROM files WHERE status='failed'")]
-    json.dump({"query": query, "results": results, "unparsed_files": failed, "coverage": coverage(con)},
+    skipped = [{"source_path": p, "status": st, "reason": e} for p, st, e in con.execute(
+        "SELECT source_path, status, error FROM files WHERE status IN ('skipped','partial')")]
+    json.dump({"query": query, "results": results, "unparsed_files": failed, "skipped_files": skipped, "coverage": coverage(con)},
               sys.stdout, indent=1)
 
 

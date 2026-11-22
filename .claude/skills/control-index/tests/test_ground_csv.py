@@ -1,0 +1,59 @@
+"""CSV exports + ground-scaled projects (issue #7). Fixture: real Shelby 'Converted to Ground' .vce (MT SPC 2SP,
+scaled about CP1 by 1.0004209515) trimmed to points 1, 60, 50000; CSV in ground ift (TBC 'Export to CAD')."""
+import json
+import math
+
+import pytest
+
+from conftest import HERE, run
+
+TREE = HERE / "fixtures" / "ground_tree"
+PT60 = (48.50505063, -111.85508541)  # truth: ground -> grid (about CP1) -> geodetic
+
+
+@pytest.fixture(scope="module")
+def out(tmp_path_factory):
+    db = tmp_path_factory.mktemp("g") / "control.sqlite"
+    run("index", TREE, "--db", db)
+    return json.loads(run("search", *PT60, "--db", db, "--all", "--radius", "50"))
+
+
+def metres(a, b):
+    return math.hypot((a[0] - b[0]) * 111320, (a[1] - b[1]) * 111320 * math.cos(math.radians(a[0])))
+
+
+def rows(out, src_end):
+    return [r for r in out["results"] if r["source_path"].endswith(src_end)]
+
+
+def test_csv_with_sibling_project_indexed_with_ground_correction(out):
+    r = next(r for r in rows(out, "ground-export.csv") if r["point_name"] == "60")
+    assert metres((r["locator"]["lat"], r["locator"]["lon"]), PT60) < 10
+    assert r["feature_code"] == "CP" and r["kind"] == "control"
+    assert "ground_scaled" in r["flags"]
+    assert "Montana" in r["coord_system"]
+    assert r["job_number"] == "2423-00519"
+
+
+def test_grid_only_vce_point_projected_in_ground_scaled_2sp_system(out):
+    r = next((r for r in rows(out, "shelby-ground.vce") if r["point_name"] == "50000"), None)
+    assert r is not None
+    assert "ground_scaled" in r["flags"]
+    assert metres((r["locator"]["lat"], r["locator"]["lon"]), PT60) < 5000
+
+
+def test_csv_without_sibling_coordinate_system_skipped_and_listed(out):
+    assert not rows(out, "orphan.csv")
+    assert any(s["source_path"].endswith("orphan.csv") for s in out["skipped_files"])
+
+
+def test_ground_scale_undone_about_project_origin_to_sub_metre():
+    import sys
+    sys.path.insert(0, str(HERE.parent / "scripts"))
+    from vce import vce_grid
+    grid, _ = vce_grid(next(TREE.rglob("shelby-ground.vce")))
+    ft = 0.3048
+    lat, lon = grid.to_latlon(1559874.885 * ft, 1397787.398 * ft)  # pt 60 ground ift
+    assert metres((lat, lon), PT60) < 0.3
+    lat, lon = grid.to_latlon(1559522.922 * ft, 1398329.542 * ft)  # CP1 = scaling origin
+    assert metres((lat, lon), (48.50413113, -111.85280692)) < 0.3

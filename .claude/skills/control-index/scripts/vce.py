@@ -64,20 +64,60 @@ def _fields(d, a, b, names):
         p = d.find(b"MF", q, b)
 
 
-def _csib_lcc(csib_text):
-    """Coordinate system name + pyproj string from the CSIB blob (space-separated byte values)."""
+class Grid:
+    """Project grid (metres) -> lat/lon. Ground-scaled projects (CSIB scale X != 1) store ground coordinates
+    = origin_grid + X * (grid - origin_grid); undone here about the project origin. flags: 'ground_scaled',
+    plus 'scale_unverified' when the origin is missing and the scale cannot be undone."""
+
+    def __init__(self, name, p4, scale=1.0, origin=None):
+        from pyproj import Transformer
+        self.coord_system, self.scale = name, scale
+        self._inv = Transformer.from_crs(p4, "EPSG:4326", always_xy=True)
+        self._o = None
+        self.flags = []
+        if abs(scale - 1) > 1e-9:
+            self.flags.append("ground_scaled")
+            if origin:
+                e, n = Transformer.from_crs("EPSG:4326", p4, always_xy=True).transform(origin[1], origin[0])
+                self._o = (n, e)
+            else:
+                self.flags.append("scale_unverified")
+
+    def to_latlon(self, n, e):
+        if self._o:
+            on, oe = self._o
+            n, e = on + (n - on) / self.scale, oe + (e - oe) / self.scale
+        lon, lat = self._inv.transform(e, n)
+        return lat, lon
+
+
+def _csib(csib_text):
+    """(coordinate system name, Grid or None) from the CSIB blob (space-separated byte values).
+    Projection block: 00 80 04 + zone name + 00 00, then lat0 lon0 (rad) FN FE k0 X(ground scale), 16 zero
+    bytes, 2 bytes, project origin lat lon (rad) h, 10 bytes, then 02 + two standard parallels (rad) for
+    Lambert 2SP (anything else there = 1SP). Origin lat outside +-90deg = unset. See vce-format.md."""
     bs = bytes(int(x) for x in csib_text.split())
     head = bs[16:bs.find(b"\x00\x00Default")]  # "TNL CSIB" + 8-byte version double, then names
     names = [x.decode("latin1") for x in head.split(b"\x00") if x]
     system, zone = (names[0], names[-1]) if len(names) > 1 else ((names or [""])[0], "")
-    i = bs.find(b"\x04" + zone.encode("latin1") + b"\x00\x00")  # projection type 4 = Lambert 1 parallel
-    if not zone or i < 0:
-        return " / ".join(filter(None, [system, zone])) or None, None
-    lat0, lon0, fn, fe, k = struct.unpack_from("<5d", bs, i + len(zone) + 3)
-    lat0, lon0 = math.degrees(lat0), math.degrees(lon0)
-    p4 = (f"+proj=lcc +lat_1={lat0} +lat_0={lat0} +lon_0={lon0} +k_0={k} +x_0={fe} +y_0={fn} "
-          "+ellps=GRS80 +units=m +no_defs")
-    return f"{system} / {zone}", p4
+    name = " / ".join(filter(None, [system, zone])) or None
+    i = bs.find(b"\x00\x80\x04")  # projection type 4 = Lambert (1SP or 2SP)
+    if i < 0:
+        return name, None
+    q = bs.find(b"\x00\x00", i + 3) + 2
+    try:
+        lat0, lon0, fn, fe, k, x = struct.unpack_from("<6d", bs, q)
+        o = q + 48 + 18
+        olat, olon, _h = struct.unpack_from("<3d", bs, o)
+        two = bs[o + 34] == 2
+        p1, p2 = struct.unpack_from("<2d", bs, o + 35) if two else (lat0, lat0)
+    except struct.error:
+        return name, None
+    deg = math.degrees
+    p4 = (f"+proj=lcc +lat_1={deg(p1)} +lat_2={deg(p2)} +lat_0={deg(lat0)} +lon_0={deg(lon0)} +k_0={k} "
+          f"+x_0={fe} +y_0={fn} +ellps=GRS80 +units=m +no_defs")
+    origin = (deg(olat), deg(olon)) if abs(olat) <= math.pi / 2 and abs(olon) <= 2 * math.pi else None
+    return name, Grid(name, p4, x, origin)
 
 
 def _stamp(ts):
@@ -91,13 +131,14 @@ def parse_vce(path, locator_decimals=4):
         d = z.read("ObjectData")
         names = _field_names(z.read("FieldNames"))
     starts = [m.start() for m in OBJ_RE.finditer(d)] + [len(d)]
-    points, codes, obs, coord_system, p4 = {}, {}, [], None, None
+    points, codes, obs, coord_system, grid, have_csib = {}, {}, [], None, None, False
     for a, b in zip(starts, starts[1:]):
         oid = struct.unpack_from("<I", d, a + 2)[0]
         fs = list(_fields(d, a, b, names))
         keys = {n for n, _ in fs}
-        if "CSIB" in keys and p4 is None:
-            coord_system, p4 = _csib_lcc(next(v for n, v in fs if n == "CSIB"))
+        if "CSIB" in keys and not have_csib:
+            have_csib = True
+            coord_system, grid = _csib(next(v for n, v in fs if n == "CSIB"))
         if {"m_FeatureCodeSchema", "m_Code"} <= keys:
             codes[oid] = next(v for n, v in fs if n == "m_Code")
         if {"m_LayerSerialC", "m_PointID"} <= keys:  # a point entity
@@ -130,19 +171,43 @@ def parse_vce(path, locator_decimals=4):
             rank = (code.strip().upper() not in CHECK_CODES and code != "", r["ts"])
             if pid not in best or rank > best[pid][0]:
                 best[pid] = (rank, code, r["ts"])
-    tf = None
+    skipped = 0
     for oid, pt in points.items():
+        flags = []
         if GEODETIC in pt:
             lat, lon = (math.degrees(x) for x in pt[GEODETIC])
-        elif GRID in pt and p4:
-            if tf is None:
-                from pyproj import Transformer
-                tf = Transformer.from_crs(p4, "EPSG:4326", always_xy=True)
-            n, e = pt[GRID]
-            lon, lat = tf.transform(e, n)
+        elif GRID in pt and grid:
+            lat, lon = grid.to_latlon(*pt[GRID])
+            flags = grid.flags
         else:
+            skipped += 1
             continue
         _, code, ts = best.get(oid, (None, "", ""))
         yield {"point_name": pt["name"], "recorded": code,
                "lat": round(lat, locator_decimals), "lon": round(lon, locator_decimals),
-               "coord_system": coord_system, "date": ts or None}
+               "coord_system": coord_system, "date": ts or None, "flags": list(flags)}
+    if skipped:
+        why = "no geodetic or grid position" if grid else f"unsupported coordinate system ({coord_system or 'none'})"
+        yield {"skipped": skipped, "reason": f"{skipped} points skipped: {why}"}
+
+
+def vce_grid(path):
+    """(Grid or None, {point name: (N, E) grid metres}) -- context for CSV exports beside the project."""
+    with zipfile.ZipFile(path) as z:
+        d = z.read("ObjectData")
+        names = _field_names(z.read("FieldNames"))
+    starts = [m.start() for m in OBJ_RE.finditer(d)] + [len(d)]
+    grid, pts = None, {}
+    for a, b in zip(starts, starts[1:]):
+        fs = list(_fields(d, a, b, names))
+        keys = {n for n, _ in fs}
+        if "CSIB" in keys and grid is None:
+            grid = _csib(next(v for n, v in fs if n == "CSIB"))[1]
+        if {"m_LayerSerialC", "m_PointID"} <= keys:
+            cs = None
+            for n, v in fs:
+                if n == "m_CoordSystem":
+                    cs = v
+                elif n == "m_Position" and len(v) == 2 and cs == GRID:
+                    pts.setdefault(next(v for n, v in fs if n == "m_PointID"), v)
+    return grid, pts
