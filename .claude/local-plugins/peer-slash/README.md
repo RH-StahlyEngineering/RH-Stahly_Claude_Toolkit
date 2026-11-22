@@ -2,7 +2,7 @@
 
 A Claude Code mod (a plugin with a hooks module) for the Claude desktop app and Claude Code.
 
-When another Claude session sends this session a message whose **first text** is an allowlisted slash command, for example
+When another Claude session sends this session a message whose **first text** is a slash command it can run, for example
 
     /mattpocock-skills:grill-me <args>
 
@@ -18,12 +18,9 @@ The sender sees its message as delivered.
 
 ## What it allows
 
-The allowlist is `ALLOWED` in `hooks/register.ts`:
+Any skill or plugin command the receiving session can run. A command it cannot run (not installed, or not a skill or plugin command) is delivered as ordinary text instead.
 
-- `mattpocock-skills:*`, Matt Pocock's skills plugin
-- `peer-slash-canary`, the test skill made by `tools/canary.py`
-
-Built-in commands such as `/clear` or `/compact` are never reachable unless you add them by name. To allow another plugin's skills, add a line such as `/^superpowers:[a-z0-9-]+$/`.
+`BLOCKED` in `hooks/register.ts` refuses built-ins that wipe or reshape the conversation by name: `/clear`, `/compact`, `/exit`, `/quit`, `/login`, `/logout`, `/resume`, `/rewind`, `/fork`. Built-in commands were tested and cannot be started this way anyway; the list is a second guard.
 
 Limits: the command must be the first text in the message, and only one command runs per message.
 

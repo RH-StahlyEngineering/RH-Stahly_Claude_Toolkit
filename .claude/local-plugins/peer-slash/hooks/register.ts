@@ -1,8 +1,10 @@
 import type { Register } from 'claude-code'
 
-// Only these commands may be started by another session's message.
-// Built-ins such as /clear or /compact are never reachable from a peer.
-const ALLOWED = [/^mattpocock-skills:[a-z0-9-]+$/, /^peer-slash-canary$/]
+// Any skill or plugin command this session can run may be started by another
+// session's message. Built-ins that wipe or reshape the conversation are refused
+// by name, even if the app ever lists them as runnable.
+const BLOCKED = new Set(['clear', 'compact', 'exit', 'quit', 'logout', 'login', 'resume', 'rewind', 'fork'])
+const allowed = (command: string) => !BLOCKED.has(command.toLowerCase())
 
 // Origins that are another session or agent talking to this one.
 const PEER_KINDS = new Set(['peer', 'peer-send-message', 'coordinator', 'projects-relay'])
@@ -24,6 +26,16 @@ const DESKTOP_SLASH =
 
 const key = (command: string, args: string) => `${command}\u0000${args.trim()}`
 
+// Only take over commands this session can actually run; anything else is
+// delivered as ordinary text, so a message is never silently lost.
+async function runnable($: any, command: string): Promise<boolean> {
+  try {
+    return (await $.command.list()).some((c: { name: string }) => c.name === command)
+  } catch {
+    return false
+  }
+}
+
 export const register: Register = on => {
   // Messages turned into commands, waiting for their plain-text copy to be dropped.
   const pending = new Set<string>()
@@ -36,7 +48,7 @@ export const register: Register = on => {
 
     const command = m[1]
     const args = (m[2] ?? '').trim()
-    if (!ALLOWED.some(re => re.test(command))) return next(e)
+    if (!allowed(command) || !(await runnable($, command))) return next(e)
 
     // Deliver the message untouched: consuming or rewriting it here makes the
     // app record the delivery as refused, and the sender may retry.
@@ -52,7 +64,7 @@ export const register: Register = on => {
 
   // The delivery is already recorded as delivered; stop its plain-text copy from
   // starting a turn, so the session sees only the command run.
-  on('prompt.submit', ($, e, next) => {
+  on('prompt.submit', async ($, e, next) => {
     if (e.command) return next(e)
 
     // The desktop app hands another session's message straight to the prompt
@@ -60,7 +72,7 @@ export const register: Register = on => {
     // app's notes and one wrapped command, nothing else.
     if (e.origin.kind === 'sdk') {
       const d = DESKTOP_SLASH.exec(e.text)
-      if (!d || !ALLOWED.some(re => re.test(d[1]))) return next(e)
+      if (!d || !allowed(d[1]) || !(await runnable($, d[1]))) return next(e)
       const command = d[1]
       const args = (d[2] ?? '').trim()
       // $.command.run is refused inside a hook the turn waits on, so run it
