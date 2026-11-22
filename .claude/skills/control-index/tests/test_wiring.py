@@ -42,7 +42,7 @@ def test_search_output_contract(tmp_path):
     db = tmp_path / "c.sqlite"
     run("index", TREE, "--db", db)
     out = json.loads(run("search", *CP60, "--db", db))
-    assert set(out) == {"query", "results", "unparsed_files", "coverage"}
+    assert set(out) == {"query", "results", "unparsed_files", "skipped_files", "coverage"}
     r = out["results"][0]
     assert {"kind", "distance_mi", "point_name", "feature_code", "description", "recorded", "flags",
             "job_number", "source_path", "coord_system", "date", "locator", "sources"} <= set(r)

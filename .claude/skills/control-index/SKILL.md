@@ -32,6 +32,7 @@ Output contract (stdout JSON, tested in `tests/test_wiring.py`):
               "job_number", "source_path", "coord_system", "date",
               "locator": {"lat", "lon", "label"}, "sources": [...]}],
  "unparsed_files": [{"source_path", "error"}],
+ "skipped_files": [{"source_path", "status", "reason"}],
  "coverage": {"folders_indexed", "folders_pending", "complete", "last_complete_run"}}
 ```
 
@@ -64,4 +65,6 @@ python scripts/control_index.py index \\stahly\PROJECTS \\Stahly\Archives
 ## Sources and tests
 
 - `.jxl` (Reductions section; WGS84 when stored, else grid projected from the job's ProjectionRecord).
-- Tests: `python -m pytest tests` (fixtures are trimmed real .jxl files; temp databases only).
+- `.vce` TBC projects (points + latest codes; grid projected from the CSIB coordinate system).
+- CSV exports (`name,N,E,Z,desc`) only when a sibling .vce/.jxl in the job tree gives the coordinate system; else in `skipped_files`. Ground-scaled projects are unscaled about the project origin; flags `ground_scaled` / `scale_unverified`.
+- Tests: `python -m pytest tests` (fixtures are trimmed real .jxl/.vce files; temp databases only).
