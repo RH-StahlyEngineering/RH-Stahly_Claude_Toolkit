@@ -3,7 +3,7 @@
   control_index.py index <root>... [--db <file>] [--budget SEC] [--max-files N]
   control_index.py search (<lat> <lon> | --kml FILE | --job NNNN-XXXXX) [--db <file>] [--radius MI] [--all]
 
-Stores pointers only (source, job, name, code, description, kind, flags, ~10 m locator).
+Stores pointers only (source, job, name, code, description, kind, flags, ~10 m locator, mark group).
 Never survey values: read those from the source file.
 """
 import argparse
@@ -18,21 +18,29 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kinds import classify, condition_flags  # noqa: E402
+from kinds import classify, condition_flags, mark_types  # noqa: E402
 from exports import Skipped, parse_csv  # noqa: E402
-from vce import Grid, parse_vce, vce_grid  # noqa: E402
+from jxl import jxl_grid, parse_jxl  # noqa: E402
+from vce import parse_vce, vce_grid  # noqa: E402
 
-LOCATOR_DECIMALS = 4  # ~11 m N-S, ~7 m E-W at Montana latitudes
+LOCATOR_M = 10.0  # locator grid spacing, metres (near-uniform N-S and E-W)
+MARK_CELL_M = 1.0  # grouping bucket, metres: only decides same-mark, never output
+SAME_MARK_M = 2.0  # copies of one mark: same kind and number/description within this distance
 LOCATOR_LABEL = "locator only"
 KIND_RANK = {"control": 0, "monument": 1, "other": 2}
+SCHEMA_VERSION = "2"  # bump when stored values change: an older database is dropped and rebuilt
+M_PER_DEG = 111320.0
 
+TABLES = ("records", "files", "folders", "meta")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS records (
   source_path TEXT, job_number TEXT, point_name TEXT, recorded TEXT,
   feature_code TEXT, description TEXT, kind TEXT, flags TEXT,
-  lat REAL, lon REAL, coord_system TEXT, date TEXT);
+  locator_lat REAL, locator_lon REAL, coord_system TEXT, date TEXT,
+  mark_id INTEGER, mark_cell_n INTEGER, mark_cell_e INTEGER);
 CREATE INDEX IF NOT EXISTS records_src ON records(source_path);
-CREATE TABLE IF NOT EXISTS files (source_path TEXT PRIMARY KEY, status TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS records_mark ON records(mark_cell_n, mark_cell_e);
+CREATE TABLE IF NOT EXISTS files (source_path TEXT PRIMARY KEY, job_number TEXT, status TEXT, error TEXT);
 CREATE TABLE IF NOT EXISTS folders (dir_path TEXT PRIMARY KEY, mtime REAL, status TEXT);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
@@ -51,70 +59,17 @@ def split_code(recorded):
     return code.strip(), desc.strip() if sep else ""
 
 
-# ---------- JXL ----------
-
-def _f(el, path):
-    t = el.findtext(path)
-    return float(t) if t not in (None, "") else None
-
-
-def _grid_transformer(root):
-    """vce.Grid (grid m -> lat/lon) from the job's last ProjectionRecord, or None. Element names verified on
-    real Lambert2Parallel (Parallel1/2) and TransverseMercator files; LocalSite KeyedInGroundScaleFactor
-    (GroundScaleFactor about ProjectLocation) is undone like a .vce ground scale."""
-    projs = root.findall("./FieldBook/ProjectionRecord/Projection")
-    proj = next((p for p in reversed(projs) if p.findtext("Type") not in (None, "NotSet")), None)
-    if proj is None:
-        return None
-    t = proj.findtext("Type")
-    g = lambda k: proj.findtext(k)  # noqa: E731
-    common = f"+lat_0={g('CentralLatitude')} +lon_0={g('CentralLongitude')} +x_0={g('FalseEasting')} +y_0={g('FalseNorthing')} +ellps=GRS80 +units=m +no_defs"
-    if t == "Lambert1Parallel":
-        p4 = f"+proj=lcc +lat_1={g('CentralLatitude')} +k_0={g('Scale')} {common}"
-    elif t == "Lambert2Parallel":
-        p4 = f"+proj=lcc +lat_1={g('Parallel1')} +lat_2={g('Parallel2')} {common}"
-    elif t == "TransverseMercator":
-        p4 = f"+proj=tmerc +k_0={g('Scale')} {common}"
-    else:
-        return None
-    site = next((rec.find("LocalSite") for rec in root.findall("./FieldBook/ProjectionRecord")
-                 if proj in list(rec)), None)
-    scale, origin, offset = 1.0, None, False
-    if site is not None and site.findtext("Type") == "KeyedInGroundScaleFactor":
-        scale = _f(site, "GroundScaleFactor") or 1.0
-        lat, lon = _f(site, "ProjectLocationLatitude"), _f(site, "ProjectLocationLongitude")
-        origin = (lat, lon) if lat is not None and lon is not None else None
-        offset = any(_f(site, k) for k in ("NorthingOffset", "EastingOffset",
-                                            "ProjectionOriginNorthingDelta", "ProjectionOriginEastingDelta"))
-    grid = Grid(None, p4, scale, origin)
-    if offset and "scale_unverified" not in grid.flags:
-        grid.flags.append("scale_unverified")  # false N/E offsets on ground coords: not handled
-    return grid
+def metric_cell(lat, lon, size_m):
+    """(row, col, k) of a near-square size_m grid. E-W scale k is the cosine of the whole-degree latitude
+    band, so cells stay within ~1.5% of size_m and columns line up between rows."""
+    k = math.cos(math.radians(round(lat)))
+    return round(lat * M_PER_DEG / size_m), round(lon * M_PER_DEG * k / size_m), k
 
 
-def parse_jxl(path):
-    root = ET.parse(path).getroot()
-    cs = root.find("./FieldBook/CoordinateSystemRecord[SystemName!='']")
-    coord_system = " / ".join(filter(None, [cs.findtext("SystemName"), cs.findtext("ZoneName")])) if cs is not None else None
-    grid = None
-    for pt in root.findall("./Reductions/Point"):
-        flags = []
-        recorded = pt.findtext("Code") or ""
-        lat, lon = _f(pt, "WGS84/Latitude"), _f(pt, "WGS84/Longitude")
-        if lat is None:
-            n, e = _f(pt, "Grid/North"), _f(pt, "Grid/East")
-            if n is None:
-                continue
-            grid = grid or _grid_transformer(root)
-            if grid is None:
-                continue
-            lat, lon = grid.to_latlon(n, e)
-            flags = list(grid.flags)
-        yield {
-            "point_name": pt.findtext("Name"), "recorded": recorded,
-            "lat": round(lat, LOCATOR_DECIMALS), "lon": round(lon, LOCATOR_DECIMALS),
-            "coord_system": coord_system, "date": root.get("TimeStamp"), "flags": flags,
-        }
+def locator(lat, lon):
+    """Centre of the ~10 m locator cell holding (lat, lon)."""
+    row, col, k = metric_cell(lat, lon, LOCATOR_M)
+    return round(row * LOCATOR_M / M_PER_DEG, 6), round(col * LOCATOR_M / (M_PER_DEG * k), 6)
 
 
 # ---------- commands ----------
@@ -132,13 +87,20 @@ def connect(db):
     # Each write is its own BEGIN IMMEDIATE transaction; overlapping runs wait on the lock.
     con = sqlite3.connect(db, timeout=120, isolation_level=None)
     con.execute("PRAGMA busy_timeout=120000")
-    with write(con):
+    with write_txn(con):
+        have = {n for (n,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        version = (con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+                   if "meta" in have else None)
+        if have & set(TABLES) and version != (SCHEMA_VERSION,):
+            for t in TABLES:  # older layout: dropped; the next index run rebuilds it
+                con.execute(f"DROP TABLE IF EXISTS {t}")
         for stmt in filter(str.strip, SCHEMA.split(";")):
             con.execute(stmt)
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
     return con
 
 
-class write:
+class write_txn:
     """BEGIN IMMEDIATE ... COMMIT (ROLLBACK on error)."""
     def __init__(self, con):
         self.con = con
@@ -150,70 +112,115 @@ class write:
         self.con.execute("ROLLBACK" if et else "COMMIT")
 
 
-def jxl_grid(path):
-    """(grid or None, {name: (N, E) metres}) -- context for CSV exports beside the job."""
-    root = ET.parse(path).getroot()
-    grid = _grid_transformer(root)
-    cs = root.find("./FieldBook/CoordinateSystemRecord[SystemName!='']")
-    name = " / ".join(filter(None, [cs.findtext("SystemName"), cs.findtext("ZoneName")])) if cs is not None else None
-    pts = {pt.findtext("Name"): (_f(pt, "Grid/North"), _f(pt, "Grid/East"))
-           for pt in root.findall("./Reductions/Point") if _f(pt, "Grid/North") is not None}
-    if grid:
-        grid.coord_system = name
-    return grid, pts
-
-
 CONTEXTS = {".vce": vce_grid, ".jxl": jxl_grid}
 PARSERS = {".jxl": parse_jxl, ".vce": parse_vce,
-           ".csv": lambda p: parse_csv(p, CONTEXTS, job_number, LOCATOR_DECIMALS)}
+           ".csv": lambda p: parse_csv(p, CONTEXTS, job_number)}
+
+
+def _mark_number(name):
+    m = re.search(r"\d+", name or "")
+    return (m.group().lstrip("0") or "0") if m else None
+
+
+def _same_mark(name, desc, other_name, other_desc):
+    """Same point number (CP60 ~ 60R) or same description, unless the descriptions name different monument
+    types (MDT aluminum cap vs Stahly RPC). Kind and distance are checked by the caller."""
+    ta, tb = mark_types(desc), mark_types(other_desc)
+    if ta and tb and not ta & tb:
+        return False
+    norm = lambda d: " ".join(d.upper().split())  # noqa: E731
+    num = _mark_number(name)
+    return (num is not None and num == _mark_number(other_name)) or (norm(desc) != "" and norm(desc) == norm(other_desc))
+
+
+def _assign_mark(con, kind, name, desc, cell_n, cell_e):
+    """mark_id shared with existing copies of this mark (merging ids this copy bridges), else a new id."""
+    reach = math.ceil(SAME_MARK_M / MARK_CELL_M)
+    ids = {mid for mid, n, d, cn, ce in con.execute(
+        "SELECT mark_id, point_name, description, mark_cell_n, mark_cell_e FROM records "
+        "WHERE kind=? AND mark_cell_n BETWEEN ? AND ? AND mark_cell_e BETWEEN ? AND ?",
+        (kind, cell_n - reach, cell_n + reach, cell_e - reach, cell_e + reach))
+        if math.hypot(cn - cell_n, ce - cell_e) * MARK_CELL_M <= SAME_MARK_M and _same_mark(name, desc, n, d)}
+    if not ids:
+        return con.execute("SELECT COALESCE(MAX(mark_id), 0) + 1 FROM records").fetchone()[0]
+    keep = min(ids)
+    for other in ids - {keep}:
+        con.execute("UPDATE records SET mark_id=? WHERE mark_id=?", (keep, other))
+    return keep
 
 
 def index_file(con, path):
+    job = job_number(path)
     try:
         rows = list(PARSERS[os.path.splitext(path)[1].lower()](path))
-    except Skipped as exc:
-        with write(con):
-            con.execute("DELETE FROM records WHERE source_path=?", (path,))
-            con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)", (path, "skipped", str(exc)))
-        return
     except Exception as exc:  # noqa: BLE001 - every parse failure is reported, not hidden
-        with write(con):
+        with write_txn(con):
             con.execute("DELETE FROM records WHERE source_path=?", (path,))
-            con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)", (path, "failed", str(exc)))
+            con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
+                        (path, job, "skipped" if isinstance(exc, Skipped) else "failed", str(exc)))
         return
-    job = job_number(path)
-    with write(con):
+    with write_txn(con):
         con.execute("DELETE FROM records WHERE source_path=?", (path,))
         notes = [r["reason"] for r in rows if "skipped" in r]
         for r in rows:
             if "skipped" in r:
                 continue
             code, desc = split_code(r["recorded"])
+            kind = classify(code, desc)
+            lat, lon = r["position"]
+            cell_n, cell_e, _ = metric_cell(lat, lon, MARK_CELL_M)
+            mark = _assign_mark(con, kind, r["point_name"], desc, cell_n, cell_e)
             con.execute(
-                "INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (path, job, r["point_name"], r["recorded"], code, desc,
-                 classify(code, desc), json.dumps(condition_flags(r["recorded"]) + r.get("flags", [])),
-                 r["lat"], r["lon"], r["coord_system"], r["date"]))
-        con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)",
-                    (path, "partial", "; ".join(notes)) if notes else (path, "ok", None))
+                "INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (path, job, r["point_name"], r["recorded"], code, desc, kind,
+                 json.dumps(condition_flags(r["recorded"]) + r.get("flags", [])),
+                 *locator(lat, lon), r["coord_system"], r["date"], mark, cell_n, cell_e))
+        con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?)",
+                    (path, job, "partial", "; ".join(notes)) if notes else (path, job, "ok", None))
 
 
 def forget_missing(con, dirpath, present):
-    """Drop records/files rows for .jxl files directly in dirpath that no longer exist."""
+    """Drop records/files rows for indexed files directly in dirpath that no longer exist."""
     prefix = os.path.join(dirpath, "")
     known = [p for (p,) in con.execute("SELECT source_path FROM files WHERE source_path LIKE ? || '%'", (prefix,))
              if os.path.dirname(p) == dirpath]
     gone = [p for p in known if p not in present]
     if gone:
-        with write(con):
+        with write_txn(con):
             for p in gone:
                 con.execute("DELETE FROM records WHERE source_path=?", (p,))
                 con.execute("DELETE FROM files WHERE source_path=?", (p,))
 
 
+JOB_SEED_DEPTH = 4  # job folders: depth 2 under PROJECTS, 3 under Archives; one level of slack
+
+
+def seed_job_folders(con, top):
+    """Record each job folder under top as pending (if not yet known) so coverage counts folders the crawl
+    has not reached yet; drop pending folders that no longer exist."""
+    found, level = [], [top]
+    for _ in range(JOB_SEED_DEPTH):
+        deeper = []
+        for d in level:
+            try:
+                subs = [e.path for e in os.scandir(d) if e.is_dir()]
+            except OSError:
+                continue
+            for p in subs:
+                is_job_root = job_number(os.path.join(p, "x")) and not job_number(os.path.join(d, "x"))
+                (found if is_job_root else deeper).append(p)
+        level = deeper
+    prefix = os.path.join(top, "")
+    stale = [p for (p,) in con.execute("SELECT dir_path FROM folders WHERE status='pending' AND dir_path LIKE ? || '%'",
+                                         (prefix,)) if not os.path.isdir(p)]
+    with write_txn(con):
+        con.executemany("INSERT OR IGNORE INTO folders VALUES (?, NULL, 'pending')", [(p,) for p in found])
+        con.executemany("DELETE FROM folders WHERE dir_path=?", [(p,) for p in stale])
+
+
 def cmd_index(args):
     """Catch-up crawl. A folder whose date modified matches the stored one (status 'done') is skipped;
-    a folder is marked done only after all its .jxl files are written, so a stopped run resumes there."""
+    a folder is marked done only after all its source files are written, so a stopped run resumes there."""
     con = connect(args.db)
     deadline = None if args.budget is None else time.monotonic() + args.budget
     stats = {"folders_read": 0, "folders_skipped": 0, "files_read": 0, "complete": True, "stopped": None}
@@ -226,6 +233,8 @@ def cmd_index(args):
         return stats["stopped"] is not None
 
     for top in args.roots:
+        seed_job_folders(con, top)
+    for top in args.roots:
         for dirpath, _, files in os.walk(top):
             try:
                 mtime = os.stat(dirpath).st_mtime
@@ -235,26 +244,26 @@ def cmd_index(args):
             if row == (mtime, "done"):
                 stats["folders_skipped"] += 1
                 continue
-            with write(con):
+            with write_txn(con):
                 con.execute("INSERT OR REPLACE INTO folders VALUES (?,?,?)", (dirpath, mtime, "pending"))
             if out_of_time():  # leave this folder pending so coverage shows it
                 break
-            jxls = [os.path.join(dirpath, fn) for fn in files if os.path.splitext(fn)[1].lower() in PARSERS]
-            forget_missing(con, dirpath, set(jxls))
-            for path in jxls:
+            sources = [os.path.join(dirpath, fn) for fn in files if os.path.splitext(fn)[1].lower() in PARSERS]
+            forget_missing(con, dirpath, set(sources))
+            for path in sources:
                 if out_of_time():
                     break
                 index_file(con, path)
                 stats["files_read"] += 1
             if stats["stopped"]:
                 break
-            with write(con):
+            with write_txn(con):
                 con.execute("UPDATE folders SET status='done' WHERE dir_path=? AND mtime=?", (dirpath, mtime))
             stats["folders_read"] += 1
         if stats["stopped"]:
             break
     stats["complete"] = stats["stopped"] is None
-    with write(con):
+    with write_txn(con):
         con.execute("INSERT OR REPLACE INTO meta VALUES ('last_run_complete', ?)", (str(stats["complete"]),))
         if stats["complete"]:
             con.execute("INSERT OR REPLACE INTO meta VALUES ('last_complete_run', ?)",
@@ -314,7 +323,8 @@ def miles_to_polygons(lat, lon, rings):
     return best
 
 
-COLS = "source_path, job_number, point_name, recorded, feature_code, description, kind, flags, lat, lon, coord_system, date"
+COLS = ("source_path, job_number, point_name, recorded, feature_code, description, kind, flags, "
+        "locator_lat, locator_lon, coord_system, date, mark_id")
 
 
 def _candidates(con, args):
@@ -337,39 +347,18 @@ def _candidates(con, args):
         box = (args.lat, args.lat, args.lon, args.lon)
     dlat = args.radius / 69.0 + 0.001
     dlon = dlat / max(math.cos(math.radians(max(abs(box[0]), abs(box[1])))), 0.01)
-    rows = con.execute(f"SELECT {COLS} FROM records WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
+    rows = con.execute(f"SELECT {COLS} FROM records WHERE locator_lat BETWEEN ? AND ? AND locator_lon BETWEEN ? AND ?",
                        (box[0] - dlat, box[1] + dlat, box[2] - dlon, box[3] + dlon)).fetchall()
     return query, rows, dist
 
 
-SAME_MARK_CELLS = 1  # locator cells (1e-4 deg) apart that still count as one mark
-
-
-def _mark_number(name):
-    m = re.search(r"\d+", name or "")
-    return m.group().lstrip("0") or "0" if m else None
-
-
-def _same_mark(a, b):
-    """Same kind, adjacent locator cell, and same point number (CP60 ~ 60R) or same description."""
-    tol = SAME_MARK_CELLS * 10 ** -LOCATOR_DECIMALS + 1e-9
-    if a["kind"] != b["kind"]:
-        return False
-    if abs(a["locator"]["lat"] - b["locator"]["lat"]) > tol or abs(a["locator"]["lon"] - b["locator"]["lon"]) > tol:
-        return False
-    na, nb = _mark_number(a["point_name"]), _mark_number(b["point_name"])
-    desc = lambda r: " ".join(r["description"].upper().split())  # noqa: E731
-    return (na is not None and na == nb) or (desc(a) != "" and desc(a) == desc(b))
-
-
 def group_duplicates(results):
-    """Collapse copies of one mark found in several records; every copy listed in `sources`."""
-    groups = []
+    """Collapse copies of one mark (same mark_id, decided at index time); every copy listed in `sources`."""
+    groups = {}
     for r in results:
-        g = next((g for g in groups if any(_same_mark(r, m) for m in g)), None)
-        (g.append(r) if g is not None else groups.append([r]))
+        groups.setdefault(r.pop("mark_id"), []).append(r)
     out = []
-    for g in groups:
+    for g in groups.values():
         primary = max(g, key=lambda r: (len(r["description"]), -(r["distance_mi"] or 0)))
         merged = dict(primary)
         merged["distance_mi"] = min((r["distance_mi"] for r in g), default=None) if primary["distance_mi"] is not None else None
@@ -380,42 +369,53 @@ def group_duplicates(results):
     return out
 
 
+def _file_lists(con, jobs):
+    """(failed, skipped/partial) files in the given jobs, plus whole-index totals of each."""
+    rows = con.execute("SELECT source_path, job_number, status, error FROM files "
+                       "WHERE status IN ('failed', 'skipped', 'partial')").fetchall()
+    failed = [{"source_path": p, "error": e} for p, j, st, e in rows if st == "failed" and j in jobs]
+    skipped = [{"source_path": p, "status": st, "reason": e} for p, j, st, e in rows if st != "failed" and j in jobs]
+    n_failed = sum(st == "failed" for _, _, st, _ in rows)
+    return failed, skipped, n_failed, len(rows) - n_failed
+
+
 def cmd_search(args):
     con = connect(args.db)
     query, rows, dist = _candidates(con, args)
-    results = []
-    for (src, job, name, recorded, code, desc, kind, flags, lat, lon, cs, date) in rows:
-        if kind == "other" and not args.all:
-            continue
+    results, jobs = [], {args.job} if args.job else set()
+    for (src, job, name, recorded, code, desc, kind, flags, lat, lon, cs, date, mark) in rows:
         d = None
         if dist is not None:
             d = dist(lat, lon)
             if d > args.radius:
                 continue
             d = round(d, 3)
+        jobs.add(job)
+        if kind == "other" and not args.all:
+            continue
         results.append({
             "kind": kind, "distance_mi": d, "point_name": name, "feature_code": code,
             "description": desc, "recorded": recorded, "flags": json.loads(flags),
             "job_number": job, "source_path": src, "coord_system": cs, "date": date,
-            "locator": {"lat": lat, "lon": lon, "label": LOCATOR_LABEL},
+            "locator": {"lat": lat, "lon": lon, "label": LOCATOR_LABEL}, "mark_id": mark,
         })
     results = group_duplicates(results)
     results.sort(key=lambda r: (KIND_RANK[r["kind"]], r["distance_mi"] or 0, r["point_name"] or ""))
-    failed = [{"source_path": p, "error": e} for p, e in con.execute("SELECT source_path, error FROM files WHERE status='failed'")]
-    skipped = [{"source_path": p, "status": st, "reason": e} for p, st, e in con.execute(
-        "SELECT source_path, status, error FROM files WHERE status IN ('skipped','partial')")]
-    json.dump({"query": query, "results": results, "unparsed_files": failed, "skipped_files": skipped, "coverage": coverage(con)},
-              sys.stdout, indent=1)
+    failed, skipped, failed_total, skipped_total = _file_lists(con, jobs - {None})
+    json.dump({"query": query, "results": results,
+               "unparsed_files": failed, "unparsed_total": failed_total,
+               "skipped_files": skipped, "skipped_total": skipped_total,
+               "coverage": coverage(con)}, sys.stdout, indent=1)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    i = sub.add_parser("index", help="crawl roots for .jxl files into the control index")
+    i = sub.add_parser("index", help="crawl roots for .jxl/.vce/.csv files into the control index")
     i.add_argument("roots", nargs="+")
     i.add_argument("--db", help="SQLite control index file (default: CONTROL_INDEX_DB env, then config.json)")
     i.add_argument("--budget", type=float, help="seconds; stop cleanly at the limit, next run resumes")
-    i.add_argument("--max-files", type=int, help="stop after reading N .jxl files, next run resumes")
+    i.add_argument("--max-files", type=int, help="stop after reading N source files, next run resumes")
     s = sub.add_parser("search", help="records within a radius, ranked kind then distance (JSON)")
     s.add_argument("lat", type=float, nargs="?")
     s.add_argument("lon", type=float, nargs="?")

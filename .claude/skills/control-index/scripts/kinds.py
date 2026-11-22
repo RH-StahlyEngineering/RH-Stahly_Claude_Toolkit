@@ -20,6 +20,16 @@ CONDITIONS = {
     "disturbed": ["DISTURBED", "DIST", "DISTURB"],
 }
 
+# Monument types named in descriptions. Two records whose descriptions both name a type, but no type in
+# common, are different marks even when close together with the same point number (MDT cap vs Stahly RPC).
+MARK_TYPES = {
+    "aluminum cap": ["AC", "ACR", "ALUMC", "ALUM", "ALUMINUM", "BRASS"],
+    "plastic cap": ["YPC", "RPC", "OPC", "YCR", "RCR", "OCR"],
+    "rebar": ["REBAR", "RB"],
+    "pipe": ["IP", "PIPE"],
+    "nail": ["MAG", "SPIKE", "PK", "NAIL"],
+}
+
 
 def _tokens(text):
     return re.findall(r"[A-Z0-9]+", (text or "").upper())
@@ -39,3 +49,8 @@ def classify(feature_code, description):
 def condition_flags(recorded):
     toks = set(_tokens(recorded))
     return [flag for flag, words in CONDITIONS.items() if toks & set(words)]
+
+
+def mark_types(description):
+    toks = set(_tokens(description))
+    return {t for t, words in MARK_TYPES.items() if toks & set(words)}

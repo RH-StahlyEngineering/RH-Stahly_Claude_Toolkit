@@ -1,4 +1,4 @@
-"""CSV point exports (control-index #7), e.g. TBC "Export to CAD": name,N,E,Z,desc.
+"""CSV point exports, e.g. TBC "Export to CAD": name,N,E,Z,desc.
 
 A CSV carries no coordinate system, so it is indexed only when a sibling project (.vce/.jxl anywhere in the
 same job folder tree) supplies one. Units are confirmed by matching point names shared with that project
@@ -52,7 +52,7 @@ def _unit(rows, pts):
     return best and best[0]
 
 
-def parse_csv(path, contexts, job_number, locator_decimals=4):
+def parse_csv(path, contexts, job_number):
     """contexts: {ext: fn(project path) -> (Grid or None, {name: (N, E) metres})}."""
     rows = list(_rows(path))
     if not rows:
@@ -77,9 +77,7 @@ def parse_csv(path, contexts, job_number, locator_decimals=4):
             if f is None:
                 continue
             for name, n, e, desc in rows:
-                lat, lon = grid.to_latlon(n * f, e * f)
-                yield {"point_name": name, "recorded": desc,
-                       "lat": round(lat, locator_decimals), "lon": round(lon, locator_decimals),
+                yield {"point_name": name, "recorded": desc, "position": grid.to_latlon(n * f, e * f),
                        "coord_system": grid.coord_system, "date": None, "flags": list(grid.flags)}
             return
     raise Skipped("coordinate system unknown: no sibling project" if not tried else

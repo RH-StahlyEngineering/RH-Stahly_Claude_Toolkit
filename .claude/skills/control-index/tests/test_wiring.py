@@ -42,10 +42,31 @@ def test_search_output_contract(tmp_path):
     db = tmp_path / "c.sqlite"
     run("index", TREE, "--db", db)
     out = json.loads(run("search", *CP60, "--db", db))
-    assert set(out) == {"query", "results", "unparsed_files", "skipped_files", "coverage"}
+    assert set(out) == {"query", "results", "unparsed_files", "unparsed_total", "skipped_files", "skipped_total",
+                        "coverage"}
     r = out["results"][0]
     assert {"kind", "distance_mi", "point_name", "feature_code", "description", "recorded", "flags",
             "job_number", "source_path", "coord_system", "date", "locator", "sources"} <= set(r)
     assert {"folders_indexed", "folders_pending", "complete", "last_complete_run"} == set(out["coverage"])
     assert set(r["locator"]) == {"lat", "lon", "label"}
     assert {"source_path", "error"} == set(out["unparsed_files"][0])
+
+
+def test_database_from_older_layout_is_rebuilt(tmp_path):
+    import sqlite3
+    db = tmp_path / "old.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE records (source_path TEXT, job_number TEXT, point_name TEXT, recorded TEXT, "
+                "feature_code TEXT, description TEXT, kind TEXT, flags TEXT, lat REAL, lon REAL, "
+                "coord_system TEXT, date TEXT)")
+    con.execute("INSERT INTO records VALUES ('old.jxl','2071-07D26','STALE','CP','CP','','control','[]',"
+                "48.5051,-111.8551,'','')")
+    con.execute("CREATE TABLE folders (dir_path TEXT PRIMARY KEY, mtime REAL, status TEXT)")
+    con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    con.commit()
+    con.close()
+    run("index", TREE, "--db", db)
+    out = json.loads(run("search", *CP60, "--db", db))
+    names = {s["point_name"] for r in out["results"] for s in r["sources"]}
+    assert "CP60" in names and "STALE" not in names
+    assert out["coverage"]["complete"] is True

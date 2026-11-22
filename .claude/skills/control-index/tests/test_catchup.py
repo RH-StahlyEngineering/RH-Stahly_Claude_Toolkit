@@ -47,7 +47,7 @@ def test_new_file_in_folder_is_picked_up(tree, db):
     shutil.copy(src, src.with_name("copy-MRC.jxl"))
     again = index(db, tree)
     assert again["files_read"] >= 1
-    # copies group under one result (#8): look in every result's sources
+    # copies group under one result: look in every result's sources
     assert any(s["source_path"].endswith("copy-MRC.jxl") for r in search(db)["results"] for s in r["sources"])
 
 
@@ -100,3 +100,12 @@ def test_two_concurrent_runs_leave_valid_database(tree, db, tmp_path):
     out = search(db)
     assert keys(out) == keys(search(full_db))
     assert len(keys(out)) == len(set(keys(out)))
+
+
+def test_pending_counts_job_folders_not_yet_reached(tree, db):
+    # fixture tree holds two jobs (Toole 2071-07D26, Conrad 2423-00519); a run stopped at once reached neither
+    index(db, tree, "--budget", 0)
+    assert search(db)["coverage"]["folders_pending"] >= 3  # the root it stopped in + both job folders
+    shutil.rmtree(next(tree.rglob("-00519-*")))
+    index(db, tree)
+    assert search(db)["coverage"]["folders_pending"] == 0

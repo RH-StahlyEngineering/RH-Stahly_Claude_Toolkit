@@ -1,3 +1,5 @@
+import math
+
 from conftest import CP60
 
 
@@ -70,8 +72,25 @@ def test_locator_rounded_and_labelled_no_survey_values(search):
         loc = r["locator"]
         assert loc["label"] == "locator only"
         assert set(loc) == {"lat", "lon", "label"}
-        assert round(loc["lat"], 4) == loc["lat"] and round(loc["lon"], 4) == loc["lon"]
         assert not {"north", "east", "elevation", "height"} & {k.lower() for k in r}
+
+
+def metres(a, b):
+    return math.hypot((a[0] - b[0]) * 111320, (a[1] - b[1]) * 111320 * math.cos(math.radians(a[0])))
+
+
+def test_locator_is_a_near_uniform_10m_cell_not_the_position(search):
+    # CP60 known at 48.505051, -111.855085: its locator is the centre of its ~10 m cell
+    cp = by_name(search(*CP60), "CP60")
+    loc = (cp["locator"]["lat"], cp["locator"]["lon"])
+    assert 0.05 < metres(loc, CP60) <= 7.2
+    # locators sit on one grid, ~10 m apart both N-S and E-W (not 11 m x 7.5 m like 4-decimal degrees)
+    res = search(*CP60, "--all")["results"]
+    lats = sorted({r["locator"]["lat"] for r in res})
+    lons = sorted({r["locator"]["lon"] for r in res})
+    steps = [(b - a) * 111320 for a, b in zip(lats, lats[1:])]
+    steps += [(b - a) * 111320 * math.cos(math.radians(CP60[0])) for a, b in zip(lons, lons[1:])]
+    assert steps and min(steps) > 9.5
 
 
 def test_unparseable_file_listed(search):

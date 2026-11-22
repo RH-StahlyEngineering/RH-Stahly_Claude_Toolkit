@@ -1,10 +1,10 @@
-"""Read points from a Trimble Business Center .vce project without TBC (control-index #6).
+"""Read points from a Trimble Business Center .vce project without TBC.
 
 A .vce is a ZIP. `FieldNames` maps numeric field ids -> names (ids differ per file, so everything is
 resolved by name). `ObjectData` is a stream of objects `{<` oid ver type nfields, each a run of fields
 `MF` u16-type u32-field-id value. Value types used here: 1 double, 2/3/5 u32, 4 string (7-bit varint
 length), 7 double array (u32 1, u32 n, n doubles), 12 u32 array (u32 1, u32 n, n u32). Other types are
-skipped by resyncing on the next `MF`. Format notes: control-index-notes/vce-format.md.
+skipped by resyncing on the next `MF`. Format notes: references/vce-format.md.
 """
 import math
 import re
@@ -67,9 +67,10 @@ def _fields(d, a, b, names):
 class Grid:
     """Project grid (metres) -> lat/lon. Ground-scaled projects (CSIB scale X != 1) store ground coordinates
     = origin_grid + X * (grid - origin_grid); undone here about the project origin. flags: 'ground_scaled',
-    plus 'scale_unverified' when the origin is missing and the scale cannot be undone."""
+    plus 'scale_unverified' when the origin is missing and the scale cannot be undone, or when the caller
+    reports offsets this class does not undo (offset_unverified)."""
 
-    def __init__(self, name, p4, scale=1.0, origin=None):
+    def __init__(self, name, p4, scale=1.0, origin=None, offset_unverified=False):
         from pyproj import Transformer
         self.coord_system, self.scale = name, scale
         self._inv = Transformer.from_crs(p4, "EPSG:4326", always_xy=True)
@@ -82,6 +83,8 @@ class Grid:
                 self._o = (n, e)
             else:
                 self.flags.append("scale_unverified")
+        if offset_unverified and "scale_unverified" not in self.flags:
+            self.flags.append("scale_unverified")  # false N/E offsets on ground coords: not handled
 
     def to_latlon(self, n, e):
         if self._o:
@@ -95,7 +98,7 @@ def _csib(csib_text):
     """(coordinate system name, Grid or None) from the CSIB blob (space-separated byte values).
     Projection block: 00 80 04 + zone name + 00 00, then lat0 lon0 (rad) FN FE k0 X(ground scale), 16 zero
     bytes, 2 bytes, project origin lat lon (rad) h, 10 bytes, then 02 + two standard parallels (rad) for
-    Lambert 2SP (anything else there = 1SP). Origin lat outside +-90deg = unset. See vce-format.md."""
+    Lambert 2SP (anything else there = 1SP). Origin lat outside +-90deg = unset. See references/vce-format.md."""
     bs = bytes(int(x) for x in csib_text.split())
     head = bs[16:bs.find(b"\x00\x00Default")]  # "TNL CSIB" + 8-byte version double, then names
     names = [x.decode("latin1") for x in head.split(b"\x00") if x]
@@ -126,7 +129,8 @@ def _stamp(ts):
     return "" if not m or m.group(3) == "0001" else f"{m.group(3)}-{m.group(1)}-{m.group(2)}T{m.group(4)}"
 
 
-def parse_vce(path, locator_decimals=4):
+def parse_vce(path):
+    """Point records with unrounded positions (the indexer snaps them to locators)."""
     with zipfile.ZipFile(path) as z:
         d = z.read("ObjectData")
         names = _field_names(z.read("FieldNames"))
@@ -184,7 +188,7 @@ def parse_vce(path, locator_decimals=4):
             continue
         _, code, ts = best.get(oid, (None, "", ""))
         yield {"point_name": pt["name"], "recorded": code,
-               "lat": round(lat, locator_decimals), "lon": round(lon, locator_decimals),
+               "position": (lat, lon),
                "coord_system": coord_system, "date": ts or None, "flags": list(flags)}
     if skipped:
         why = "no geodetic or grid position" if grid else f"unsupported coordinate system ({coord_system or 'none'})"

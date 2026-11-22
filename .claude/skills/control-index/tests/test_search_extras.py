@@ -62,3 +62,14 @@ def test_unparseable_files_listed_in_every_mode(search_args):
 def test_coverage_in_every_mode(search_args):
     for args in (("--job", "2071-07D26"), ("--kml", LIMITS)):
         assert "folders_indexed" in search_args(*args)["coverage"]
+
+
+def test_file_lists_limited_to_search_area_with_whole_index_totals(search_args):
+    conrad = search_args("48.17", "-111.8528", "--radius", 0.5)  # far from the Toole job's corrupt.jxl
+    assert [r["point_name"] for r in conrad["results"]] == ["10"]
+    assert conrad["unparsed_files"] == []
+    assert conrad["unparsed_total"] == 1
+
+
+def test_files_listed_for_job_search_only_from_that_job(search_args):
+    assert search_args("--job", "2423-00519")["unparsed_files"] == []
