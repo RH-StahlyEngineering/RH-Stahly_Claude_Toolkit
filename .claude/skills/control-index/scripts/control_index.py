@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kinds import classify, condition_flags  # noqa: E402
+from vce import parse_vce  # noqa: E402
 
 LOCATOR_DECIMALS = 4  # ~11 m N-S, ~7 m E-W at Montana latitudes
 LOCATOR_LABEL = "locator only"
@@ -96,6 +97,9 @@ def parse_jxl(path):
         }
 
 
+PARSERS = {".jxl": parse_jxl, ".vce": parse_vce}
+
+
 # ---------- commands ----------
 
 def connect(db):
@@ -109,11 +113,12 @@ def cmd_index(args):
     for top in args.roots:
         for dirpath, _, files in os.walk(top):
             for fn in files:
-                if not fn.lower().endswith(".jxl"):
+                parser = PARSERS.get(os.path.splitext(fn)[1].lower())
+                if parser is None:
                     continue
                 path = os.path.join(dirpath, fn)
                 try:
-                    rows = list(parse_jxl(path))
+                    rows = list(parser(path))
                 except Exception as exc:  # noqa: BLE001 - every parse failure is reported, not hidden
                     with con:
                         con.execute("DELETE FROM records WHERE source_path=?", (path,))
