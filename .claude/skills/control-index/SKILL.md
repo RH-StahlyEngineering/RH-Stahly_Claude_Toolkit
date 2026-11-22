@@ -8,7 +8,7 @@ description: Find prior Stahly control and monument records near a site from the
 Points to records; never stores survey values. A result's `locator` is ~10 m and labelled "locator only": read real values from `source_path`.
 
 ```
-python scripts/control_index.py index <root>... --db <control.sqlite>
+python scripts/control_index.py index <root>... --db <control.sqlite> [--budget SEC] [--max-files N]
 python scripts/control_index.py search <lat> <lon> --db <control.sqlite> [--radius 1] [--all]
 ```
 

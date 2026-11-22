@@ -1,6 +1,6 @@
 """Control index: a map of prior Stahly control/monument records by locator.
 
-  control_index.py index <root>... --db <file>
+  control_index.py index <root>... --db <file> [--budget SEC] [--max-files N]
   control_index.py search <lat> <lon> --db <file> [--radius MI] [--all]
 
 Stores pointers only (source, job, name, code, description, kind, flags, ~10 m locator).
@@ -13,6 +13,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,6 +30,8 @@ CREATE TABLE IF NOT EXISTS records (
   lat REAL, lon REAL, coord_system TEXT, date TEXT);
 CREATE INDEX IF NOT EXISTS records_src ON records(source_path);
 CREATE TABLE IF NOT EXISTS files (source_path TEXT PRIMARY KEY, status TEXT, error TEXT);
+CREATE TABLE IF NOT EXISTS folders (dir_path TEXT PRIMARY KEY, mtime REAL, status TEXT);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
 JOB_RE = re.compile(r"[\\/]A?(\d{4})-[^\\/]*[\\/]-([0-9A-Za-z]{5})")
@@ -99,38 +102,121 @@ def parse_jxl(path):
 # ---------- commands ----------
 
 def connect(db):
-    con = sqlite3.connect(db, timeout=30)
-    con.executescript(SCHEMA)
+    # Rollback journal, not WAL: the shared index may live on an SMB share where WAL is unsafe.
+    # Each write is its own BEGIN IMMEDIATE transaction; overlapping runs wait on the lock.
+    con = sqlite3.connect(db, timeout=120, isolation_level=None)
+    con.execute("PRAGMA busy_timeout=120000")
+    with write(con):
+        for stmt in filter(str.strip, SCHEMA.split(";")):
+            con.execute(stmt)
     return con
 
 
+class write:
+    """BEGIN IMMEDIATE ... COMMIT (ROLLBACK on error)."""
+    def __init__(self, con):
+        self.con = con
+
+    def __enter__(self):
+        self.con.execute("BEGIN IMMEDIATE")
+
+    def __exit__(self, et, *_):
+        self.con.execute("ROLLBACK" if et else "COMMIT")
+
+
+def index_file(con, path):
+    try:
+        rows = list(parse_jxl(path))
+    except Exception as exc:  # noqa: BLE001 - every parse failure is reported, not hidden
+        with write(con):
+            con.execute("DELETE FROM records WHERE source_path=?", (path,))
+            con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)", (path, "failed", str(exc)))
+        return
+    job = job_number(path)
+    with write(con):
+        con.execute("DELETE FROM records WHERE source_path=?", (path,))
+        for r in rows:
+            code, desc = split_code(r["recorded"])
+            con.execute(
+                "INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (path, job, r["point_name"], r["recorded"], code, desc,
+                 classify(code, desc), json.dumps(condition_flags(r["recorded"])),
+                 r["lat"], r["lon"], r["coord_system"], r["date"]))
+        con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)", (path, "ok", None))
+
+
+def forget_missing(con, dirpath, present):
+    """Drop records/files rows for .jxl files directly in dirpath that no longer exist."""
+    prefix = os.path.join(dirpath, "")
+    known = [p for (p,) in con.execute("SELECT source_path FROM files WHERE source_path LIKE ? || '%'", (prefix,))
+             if os.path.dirname(p) == dirpath]
+    gone = [p for p in known if p not in present]
+    if gone:
+        with write(con):
+            for p in gone:
+                con.execute("DELETE FROM records WHERE source_path=?", (p,))
+                con.execute("DELETE FROM files WHERE source_path=?", (p,))
+
+
 def cmd_index(args):
+    """Catch-up crawl. A folder whose date modified matches the stored one (status 'done') is skipped;
+    a folder is marked done only after all its .jxl files are written, so a stopped run resumes there."""
     con = connect(args.db)
+    deadline = None if args.budget is None else time.monotonic() + args.budget
+    stats = {"folders_read": 0, "folders_skipped": 0, "files_read": 0, "complete": True, "stopped": None}
+
+    def out_of_time():
+        if deadline is not None and time.monotonic() >= deadline:
+            stats["stopped"] = "budget"
+        elif args.max_files is not None and stats["files_read"] >= args.max_files:
+            stats["stopped"] = "max_files"
+        return stats["stopped"] is not None
+
     for top in args.roots:
         for dirpath, _, files in os.walk(top):
-            for fn in files:
-                if not fn.lower().endswith(".jxl"):
-                    continue
-                path = os.path.join(dirpath, fn)
-                try:
-                    rows = list(parse_jxl(path))
-                except Exception as exc:  # noqa: BLE001 - every parse failure is reported, not hidden
-                    with con:
-                        con.execute("DELETE FROM records WHERE source_path=?", (path,))
-                        con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)", (path, "failed", str(exc)))
-                    continue
-                job = job_number(path)
-                with con:
-                    con.execute("DELETE FROM records WHERE source_path=?", (path,))
-                    for r in rows:
-                        code, desc = split_code(r["recorded"])
-                        con.execute(
-                            "INSERT INTO records VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                            (path, job, r["point_name"], r["recorded"], code, desc,
-                             classify(code, desc), json.dumps(condition_flags(r["recorded"])),
-                             r["lat"], r["lon"], r["coord_system"], r["date"]))
-                    con.execute("INSERT OR REPLACE INTO files VALUES (?,?,?)", (path, "ok", None))
+            try:
+                mtime = os.stat(dirpath).st_mtime
+            except OSError:
+                continue
+            row = con.execute("SELECT mtime, status FROM folders WHERE dir_path=?", (dirpath,)).fetchone()
+            if row == (mtime, "done"):
+                stats["folders_skipped"] += 1
+                continue
+            with write(con):
+                con.execute("INSERT OR REPLACE INTO folders VALUES (?,?,?)", (dirpath, mtime, "pending"))
+            if out_of_time():  # leave this folder pending so coverage shows it
+                break
+            jxls = [os.path.join(dirpath, fn) for fn in files if fn.lower().endswith(".jxl")]
+            forget_missing(con, dirpath, set(jxls))
+            for path in jxls:
+                if out_of_time():
+                    break
+                index_file(con, path)
+                stats["files_read"] += 1
+            if stats["stopped"]:
+                break
+            with write(con):
+                con.execute("UPDATE folders SET status='done' WHERE dir_path=? AND mtime=?", (dirpath, mtime))
+            stats["folders_read"] += 1
+        if stats["stopped"]:
+            break
+    stats["complete"] = stats["stopped"] is None
+    with write(con):
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('last_run_complete', ?)", (str(stats["complete"]),))
+        if stats["complete"]:
+            con.execute("INSERT OR REPLACE INTO meta VALUES ('last_complete_run', ?)",
+                        (time.strftime("%Y-%m-%dT%H:%M:%S"),))
     con.close()
+    json.dump(stats, sys.stdout)
+
+
+def coverage(con):
+    meta = dict(con.execute("SELECT key, value FROM meta"))
+    done, pending = (con.execute("SELECT COUNT(*) FROM folders WHERE status=?", (s,)).fetchone()[0]
+                     for s in ("done", "pending"))
+    return {"folders_indexed": done, "folders_pending": pending,
+            "complete": meta.get("last_run_complete") == "True" and pending == 0,
+            "last_complete_run": meta.get("last_complete_run")}
 
 
 def miles_between(lat1, lon1, lat2, lon2):
@@ -163,7 +249,7 @@ def cmd_search(args):
     results.sort(key=lambda r: (KIND_RANK[r["kind"]], r["distance_mi"]))
     failed = [{"source_path": p, "error": e} for p, e in con.execute("SELECT source_path, error FROM files WHERE status='failed'")]
     json.dump({"query": {"lat": args.lat, "lon": args.lon, "radius_mi": args.radius},
-               "results": results, "unparsed_files": failed}, sys.stdout, indent=1)
+               "results": results, "unparsed_files": failed, "coverage": coverage(con)}, sys.stdout, indent=1)
 
 
 def main(argv=None):
@@ -172,6 +258,8 @@ def main(argv=None):
     i = sub.add_parser("index", help="crawl roots for .jxl files into the control index")
     i.add_argument("roots", nargs="+")
     i.add_argument("--db", required=True, help="SQLite control index file")
+    i.add_argument("--budget", type=float, help="seconds; stop cleanly at the limit, next run resumes")
+    i.add_argument("--max-files", type=int, help="stop after reading N .jxl files, next run resumes")
     s = sub.add_parser("search", help="records within a radius, ranked kind then distance (JSON)")
     s.add_argument("lat", type=float)
     s.add_argument("lon", type=float)
