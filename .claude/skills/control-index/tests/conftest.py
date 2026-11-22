@@ -30,3 +30,10 @@ def search(db):
     def _search(lat, lon, *extra):
         return json.loads(run("search", lat, lon, "--db", db, *extra))
     return _search
+
+
+@pytest.fixture(scope="session")
+def search_args(db):
+    def _search(*args):
+        return json.loads(run("search", *args, "--db", db))
+    return _search
