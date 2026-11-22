@@ -1,7 +1,7 @@
 """Control index: a map of prior Stahly control/monument records by locator.
 
-  control_index.py index <root>... --db <file> [--budget SEC] [--max-files N]
-  control_index.py search (<lat> <lon> | --kml FILE | --job NNNN-XXXXX) --db <file> [--radius MI] [--all]
+  control_index.py index <root>... [--db <file>] [--budget SEC] [--max-files N]
+  control_index.py search (<lat> <lon> | --kml FILE | --job NNNN-XXXXX) [--db <file>] [--radius MI] [--all]
 
 Stores pointers only (source, job, name, code, description, kind, flags, ~10 m locator).
 Never survey values: read those from the source file.
@@ -14,6 +14,7 @@ import re
 import sqlite3
 import sys
 import time
+from pathlib import Path
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -100,6 +101,14 @@ def parse_jxl(path):
 
 
 # ---------- commands ----------
+
+CONFIG = Path(__file__).resolve().parent.parent / "config.json"
+
+
+def resolve_db(flag):
+    """--db flag, else CONTROL_INDEX_DB env, else `db` in the skill's config.json."""
+    return flag or os.environ.get("CONTROL_INDEX_DB") or json.loads(CONFIG.read_text(encoding="utf-8"))["db"]
+
 
 def connect(db):
     # Rollback journal, not WAL: the shared index may live on an SMB share where WAL is unsafe.
@@ -358,7 +367,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     i = sub.add_parser("index", help="crawl roots for .jxl files into the control index")
     i.add_argument("roots", nargs="+")
-    i.add_argument("--db", required=True, help="SQLite control index file")
+    i.add_argument("--db", help="SQLite control index file (default: CONTROL_INDEX_DB env, then config.json)")
     i.add_argument("--budget", type=float, help="seconds; stop cleanly at the limit, next run resumes")
     i.add_argument("--max-files", type=int, help="stop after reading N .jxl files, next run resumes")
     s = sub.add_parser("search", help="records within a radius, ranked kind then distance (JSON)")
@@ -368,8 +377,14 @@ def main(argv=None):
     s.add_argument("--job", help="job number, e.g. 2071-07D26: every record of that job")
     s.add_argument("--radius", type=float, default=1.0, help="miles (default 1)")
     s.add_argument("--all", action="store_true", help="include kind 'other' (non-control points)")
-    s.add_argument("--db", required=True)
+    s.add_argument("--db")
+    w = sub.add_parser("where-db", help="print the database path that would be used")
+    w.add_argument("--db")
     args = ap.parse_args(argv)
+    args.db = resolve_db(args.db)
+    if args.cmd == "where-db":
+        print(args.db)
+        return
     {"index": cmd_index, "search": cmd_search}[args.cmd](args)
 
 

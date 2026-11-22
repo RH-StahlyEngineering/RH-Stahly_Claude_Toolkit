@@ -1,23 +1,67 @@
 ---
 name: control-index
-description: Find prior Stahly control and monument records near a site from the control index (a map of records by locator). Use when looking for existing control, monuments or benchmarks Stahly already tied near a project location, or when (re)indexing project folders into the control index.
+description: Control index - find prior Stahly control, monuments and benchmarks already tied near a site. Branches - search near a site (lat/lon or limits KML) or by job number; background catch-up indexing of new project folders (callers like to-field); first full build (only when RH asks). Use when looking for existing control near a project, or when (re)indexing project folders.
 ---
 
 # Control index
 
 Points to records; never stores survey values. A result's `locator` is ~10 m and labelled "locator only": read real values from `source_path`.
 
+## Database
+
+Path resolves: `--db` flag, else `CONTROL_INDEX_DB` env, else `config.json` (`db`). Default is RH's shared GIS folder:
+`\\Stahly\resource library\2 Department Resources\SURVEY_GIS\GIS Resources\Stahly Internal All Points GIS\Control_Index\control_index.sqlite`.
+`python scripts/control_index.py where-db` prints the path in use.
+
+- SMB share: SQLite rollback journal (no WAL). One writer at a time; don't start a second `index` while one runs. Searches are fine alongside.
+- Next to it sits RH's hand-built ArcGIS "Stahly All Points" dataset (`Geodatabase\Stahly_All_Points.gdb`, `Shapefiles\*Merge`, `TBC Exports-Raw`). Never modify it. Possible later cross-check or seed; not used now.
+
+## Search (near a site / by job)
+
 ```
-python scripts/control_index.py index <root>... --db <control.sqlite> [--budget SEC] [--max-files N]
-python scripts/control_index.py search <lat> <lon> --db <control.sqlite> [--radius 1] [--all]
-python scripts/control_index.py search --kml <limits.kml> --db <control.sqlite> [--radius 1] [--all]
-python scripts/control_index.py search --job 2071-07D26 --db <control.sqlite> [--all]
+python scripts/control_index.py search <lat> <lon> [--radius 1] [--all]
+python scripts/control_index.py search --kml <limits.kml> [--radius 1] [--all]
+python scripts/control_index.py search --job 2071-07D26 [--all]
 ```
 
-- Sources: `.jxl` (Reductions section; WGS84 when stored, else grid projected from the job's ProjectionRecord).
-- Search JSON: `results` ranked kind (control, monument, other) then distance; `--all` adds kind `other`. `unparsed_files` lists files that failed to parse; `coverage` gives folders indexed/pending (every mode).
-- `--kml`: radius from the polygon edge (inside = 0). `--job`: that job's records, `distance_mi` null.
+Output contract (stdout JSON, tested in `tests/test_wiring.py`):
+
+```
+{"query": {...},
+ "results": [{"kind", "distance_mi", "point_name", "feature_code", "description", "recorded", "flags",
+              "job_number", "source_path", "coord_system", "date",
+              "locator": {"lat", "lon", "label"}, "sources": [...]}],
+ "unparsed_files": [{"source_path", "error"}],
+ "coverage": {"folders_indexed", "folders_pending", "complete", "last_complete_run"}}
+```
+
+- `results` ranked kind (control, monument, other) then distance; `--all` adds kind `other`.
+- `--kml`: radius from the polygon edge (inside = 0). `--job`: `distance_mi` null.
 - Copies of one mark (same kind, adjacent locator cell, same point number or description, e.g. CP60 / 60R) collapse to one result; `sources` lists every copy.
+- `coverage.complete` false means the index is partial: say so when reporting results.
 - Kind and condition flags (bent/broken/tipped/disturbed) come from `scripts/kinds.py`, the one editable keyword table.
-- Database folder: pass `--db`; the shared location is RH's choice.
-- Tests: `python -m pytest tests` (fixtures are trimmed real .jxl files).
+
+## Catch-up (background, callers like to-field)
+
+Run as a BACKGROUND subagent; never block the caller on it:
+
+```
+python scripts/control_index.py index \\stahly\PROJECTS \\Stahly\Archives --budget 220
+```
+
+- Skips unchanged folders; a stopped run resumes next time.
+- Exit code 0 even when the budget stops it. Read stdout JSON `{"complete", "stopped", "folders_read", "folders_skipped", "files_read"}`; `stopped` is `"budget"`/`"max_files"`/null.
+- The caller searches whatever is indexed; it doesn't wait for catch-up.
+
+## First full build
+
+Only when RH explicitly asks. No automatic trigger. Same command without `--budget` (hours on the share):
+
+```
+python scripts/control_index.py index \\stahly\PROJECTS \\Stahly\Archives
+```
+
+## Sources and tests
+
+- `.jxl` (Reductions section; WGS84 when stored, else grid projected from the job's ProjectionRecord).
+- Tests: `python -m pytest tests` (fixtures are trimmed real .jxl files; temp databases only).
