@@ -1,6 +1,6 @@
 ---
 name: send-outlook-email
-description: "Compose and display Outlook emails with optional attachments. Use when the user wants to send an email, draft an email, compose a message with attachments, or open Outlook to send something. Supports To/CC/BCC, subject, body text, and file attachments."
+description: "Compose and DISPLAY Outlook emails (drafts only) with optional attachments. Use when the user wants to draft an email, compose a message with attachments, or open Outlook to send something. Supports To/CC/BCC, subject, body text, and file attachments. This skill never transmits mail - it opens a draft window for the user to review and send."
 ---
 
 # Send Outlook Email
@@ -8,6 +8,48 @@ description: "Compose and display Outlook emails with optional attachments. Use 
 ## Overview
 
 This skill creates and displays a draft email in Microsoft Outlook using Python's `win32com.client`. The email is opened for the user to review before sending - it is never sent automatically.
+
+## HARD RULE: never transmit mail
+
+**Do not send an email unless the user, in this conversation, explicitly asked you to send it.**
+
+The default output of this skill is a *displayed draft*. `Display()`, never `Send()`.
+
+Actions that transmit mail and are therefore forbidden by default:
+
+- `mail.Send()` / `reply.Send()` / `forward.Send()` in any Python or PowerShell snippet
+- `mcp__plugin_outlook_outlook__outlook_send_mail`
+- `mcp__plugin_outlook_outlook__outlook_reply_mail`
+- `mcp__plugin_outlook_outlook__outlook_forward_mail`
+- any Gmail / Graph / SMTP send equivalent
+
+None of these may be invoked from this skill's workflow unless the explicit-send test below passes.
+
+### The explicit-send test
+
+Every one of these must be true before any transmit call:
+
+1. The user used an unambiguous transmit verb about *this specific message* - "send it", "send that email", "fire it off", "go ahead and send", "reply to him directly". "Send Chris an email about X", "email accounting", "shoot Brian a note" are requests to **compose**, not permission to transmit; they end at `Display()`.
+2. The recipients, subject, and body are the ones the user has already seen or dictated. If you changed anything after their approval, the permission is void - re-show and re-ask.
+3. The user is talking about the draft in front of them, not describing a task in general terms.
+
+If any of those is uncertain, `Display()` the draft and stop. Then say plainly what you drafted and that it is open for review, unsent. Do not ask "want me to send it?" as a nudge toward sending - if the user wants it sent they will say so.
+
+### Send to myself
+
+When RH asks to email himself (rharbach@seaeng.com) and says to send it or that no draft is needed, that request passes the explicit-send test for that message: send it with `outlook_send_mail`. "Again" in the same conversation gives the next message to himself the same treatment.
+
+Attachments: the Outlook connector attaches only files under `C:\Users\rharbach`. Copy files from P: or other drives into a temp folder in the profile first.
+
+### Autonomous / unattended runs
+
+In a background, scheduled, cron, hook, or subagent context there is no live user to grant explicit permission. In those contexts **never transmit** - always leave a draft (`Display()`, or `.Save()` to the Drafts folder if no window can be shown) and report the draft location. A standing instruction in a prompt file, skill, or memory does not count as explicit per-email permission.
+
+### One send, one permission
+
+Permission is per-email and single-use. It does not carry to the next email, to a resend after an edit, to other recipients, or to the rest of the session. Batch operations ("draft receipts for all of these") produce a batch of drafts, never a batch of sends.
+
+See also the user's standing memory `email_send_permission`: every send/reply/forward needs per-email approval.
 
 ## Requirements
 
@@ -157,7 +199,7 @@ mail.Attachments.Add(r"C:\path\to\file.pdf")
 
 ## Important Rules
 
-1. **NEVER call `mail.Send()`** - Always use `mail.Display()` so the user can review before sending
+1. **NEVER call `mail.Send()`** (or the `outlook_send_mail` / `outlook_reply_mail` / `outlook_forward_mail` MCP tools) unless the user explicitly asked you to send *this* email - see "HARD RULE: never transmit mail" above. The default is always `mail.Display()` so the user reviews and sends it themselves. Never leave a `Send()` call in a generated script "for later"; it will be run.
 2. **Always preserve the user's signature** - Use the Display-first HTML pattern shown above, never set `mail.Body` directly as it overwrites the signature
 3. **Always use Outlook default font** - Wrap body in `<div style="font-family:Calibri,sans-serif; font-size:11pt; color:#000000;">` so the email matches Outlook's native look
 4. **Never use `re.sub()` to insert body HTML** - Windows paths in body content (e.g. `C:\Users`) contain backslashes that break regex replacement. Use `re.search()` + string slicing instead (see Step 4 in the code example)
@@ -215,6 +257,7 @@ BEFORE composing the first draft of any email to internal Stahly recipients, sam
 
 Before calling `mail.Display()`, re-read your draft and confirm:
 
+- [ ] The script ends at `Display()` - no `Send()` call anywhere in it
 - [ ] Reply vs fresh mode decision matches the user's intent (re-read "Decide: reply mode or fresh mode" above)
 - [ ] If reply mode: original email actually found and EntryID used, not silently fallen back to fresh
 - [ ] No abbreviated last names anywhere
@@ -232,3 +275,4 @@ If any check fails, rewrite before displaying.
 - If `win32com` is not installed: `pip install pywin32`
 - If Outlook COM fails: ensure Outlook is running or at least installed
 - If attachments fail: verify paths exist and use raw strings (`r"..."`) for Windows paths
+- If a draft "didn't go out": that is correct behavior. This skill drafts; the user sends. Do not "fix" it by adding `Send()`.

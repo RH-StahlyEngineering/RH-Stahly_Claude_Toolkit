@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS records (
   mark_id INTEGER, mark_cell_n INTEGER, mark_cell_e INTEGER);
 CREATE INDEX IF NOT EXISTS records_src ON records(source_path);
 CREATE INDEX IF NOT EXISTS records_mark ON records(mark_cell_n, mark_cell_e);
+CREATE INDEX IF NOT EXISTS records_mark_id ON records(mark_id);
 CREATE TABLE IF NOT EXISTS files (source_path TEXT PRIMARY KEY, job_number TEXT, status TEXT, error TEXT);
 CREATE TABLE IF NOT EXISTS folders (dir_path TEXT PRIMARY KEY, mtime REAL, status TEXT);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -194,6 +195,48 @@ def forget_missing(con, dirpath, present):
 
 JOB_SEED_DEPTH = 4  # job folders: depth 2 under PROJECTS, 3 under Archives; one level of slack
 
+# Subtrees that never hold TBC projects or exports; not descended into. TBC's own "<job> Files", HistoryLog,
+# InternalData and ChangeLog folders hold photos and logs, not points.
+SKIP_DIRS = re.compile(r"(?i)^(2-UAV|UAV|Photos?|Pictures|Images?|Imagery|Ortho.*|Lidar|LAS|DWG|DGN|"
+                       r"HistoryLog|InternalData|ChangeLog|\..*)$|\sFiles$")
+
+
+# TBC project internals inside a TBC folder: no points, many subfolders.
+TBC_INTERNAL = re.compile(r"(?i)^(Adjust|Alignments|RoadLink.*|Reports|files)$|\.job$")
+
+
+def walk(top):
+    """os.walk without per-folder link and stat calls (slow on a network share): uses what scandir returns.
+    Yields (dirpath, dirnames, filenames, mtime); prune dirnames in place to skip subtrees."""
+    try:
+        stack = [(top, os.stat(top).st_mtime)]
+    except OSError:
+        return
+    while stack:
+        d, mtime = stack.pop()
+        try:
+            entries = list(os.scandir(d))
+        except OSError:
+            continue
+        subs = {e.name: e for e in entries if e.is_dir(follow_symlinks=False)}
+        dirnames = list(subs)
+        yield d, dirnames, [e.name for e in entries if e.name not in subs], mtime
+        for name in reversed(dirnames):
+            try:
+                stack.append((subs[name].path, subs[name].stat(follow_symlinks=False).st_mtime))
+            except OSError:
+                pass
+
+
+# Levels below a crawl root searched for a TBC folder (jobs sit 2 deep under PROJECTS, 3 under Archives;
+# TBC folders 1-3 below the job). Folders named like TBC deeper than this are still entered.
+SEARCH_DEPTH = 6
+
+
+def in_tbc_folder(dirpath, top):
+    """Stahly keeps TBC projects and exports under a folder named like "TBC" (1-TBC, TBC, TBC INFT TEMPLATE)."""
+    return "tbc" in os.path.relpath(dirpath, top).lower()
+
 
 def seed_job_folders(con, top):
     """Record each job folder under top as pending (if not yet known) so coverage counts folders the crawl
@@ -235,12 +278,20 @@ def cmd_index(args):
     for top in args.roots:
         seed_job_folders(con, top)
     for top in args.roots:
-        for dirpath, _, files in os.walk(top):
-            try:
+        for dirpath, dirnames, files, mtime in walk(top):
+            in_tbc = in_tbc_folder(dirpath, top)
+            depth = 0 if dirpath == top else os.path.relpath(dirpath, top).count(os.sep) + 1
+            # outside TBC folders, descend only to SEARCH_DEPTH looking for one; inside, skip TBC internals
+            dirnames[:] = [d for d in dirnames if not SKIP_DIRS.search(d)
+                           and (not TBC_INTERNAL.search(d) if in_tbc
+                                else depth < SEARCH_DEPTH or "tbc" in d.lower())]
+            row = con.execute("SELECT mtime, status FROM folders WHERE dir_path=?", (dirpath,)).fetchone()
+            if row is None and not in_tbc:
+                continue  # sources live only under a folder named like "TBC"; job seeds still get marked done
+            try:  # a fresh stat: NTFS can lag a child folder's date in its parent's listing
                 mtime = os.stat(dirpath).st_mtime
             except OSError:
                 continue
-            row = con.execute("SELECT mtime, status FROM folders WHERE dir_path=?", (dirpath,)).fetchone()
             if row == (mtime, "done"):
                 stats["folders_skipped"] += 1
                 continue

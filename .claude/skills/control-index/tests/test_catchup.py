@@ -1,6 +1,7 @@
 """Catch-up: skip unchanged folders, resume, budget, coverage, concurrent safety. CLI output only."""
 import json
 import shutil
+from pathlib import Path
 import subprocess
 import sys
 
@@ -105,7 +106,20 @@ def test_two_concurrent_runs_leave_valid_database(tree, db, tmp_path):
 def test_pending_counts_job_folders_not_yet_reached(tree, db):
     # fixture tree holds two jobs (Toole 2071-07D26, Conrad 2423-00519); a run stopped at once reached neither
     index(db, tree, "--budget", 0)
-    assert search(db)["coverage"]["folders_pending"] >= 3  # the root it stopped in + both job folders
+    assert search(db)["coverage"]["folders_pending"] >= 2  # both job folders (only TBC folders and job folders are tracked)
     shutil.rmtree(next(tree.rglob("-00519-*")))
     index(db, tree)
     assert search(db)["coverage"]["folders_pending"] == 0
+
+
+def test_only_tbc_folders_are_read(tmp_path, db):
+    # a .jxl outside any TBC folder, and one inside a TBC "<job> Files" photo folder, are never read
+    src = next(Path(__file__).parent.glob("fixtures/tree/PROJECTS/*/*/Survey_GIS_Data/1-TBC/261110-BD-MRC.jxl"))
+    job = tmp_path / "PROJECTS" / "2071-Toole County" / "-07D26_Test"
+    (job / "Survey_GIS_Data" / "5-Field_Notes").mkdir(parents=True)
+    (job / "Survey_GIS_Data" / "1-TBC" / "261110 Files").mkdir(parents=True)
+    shutil.copy(src, job / "Survey_GIS_Data" / "5-Field_Notes" / "loose.jxl")
+    shutil.copy(src, job / "Survey_GIS_Data" / "1-TBC" / "261110 Files" / "photo-folder.jxl")
+    index(db, tmp_path)
+    paths = {s["source_path"] for r in search(db, "--job", "2071-07D26")["results"] for s in r["sources"]}
+    assert not paths

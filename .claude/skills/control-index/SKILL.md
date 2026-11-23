@@ -57,6 +57,11 @@ python scripts/control_index.py index \\stahly\PROJECTS \\Stahly\Archives --budg
 - Exit code 0 even when the budget stops it. Read stdout JSON `{"complete", "stopped", "folders_read", "folders_skipped", "files_read"}`; `stopped` is `"budget"`/`"max_files"`/null.
 - The caller searches whatever is indexed; it doesn't wait for catch-up.
 
+## Crawl rules
+
+- Sources are read only under folders whose path contains "TBC" (1-TBC, TBC, TBC INFT TEMPLATE); photo, UAV, lidar, DWG and TBC's own `* Files`/HistoryLog/InternalData folders are not descended into.
+- Run `index` from PowerShell or cmd. Git Bash rewrites `\\server\share` arguments into local paths.
+
 ## First full build
 
 Only when RH explicitly asks. Same command without `--budget` (hours on the share):

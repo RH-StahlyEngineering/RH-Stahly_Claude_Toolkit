@@ -80,4 +80,4 @@ Use the app's built-in browser, not Chrome, because ITIC sessions are tied to a 
 ## Step 4: Record and archive
 
 - Update the project `_AI\STATE.md`: ticket count, status, start date, members notified, and that the description passed the blind test (with its score).
-- Ticket numbers arrive by email. Archive the positive responses to `Survey_GIS_Data\4-Utility_Locates\`, with the ticket number in the file name, using the stahly-outlook skill.
+- Ticket numbers arrive by email: "Ticket Check Status for MT Ticket <number>" from mt@occinc.com, one per ticket with its address, filed in the Outlook folder **811 Locates** (search there by sender, not the Inbox). Archive the positive responses to `Survey_GIS_Data\4-Utility_Locates\`, with the ticket number in the file name, using the stahly-outlook skill.

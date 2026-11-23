@@ -10,6 +10,8 @@ Camera specs, per-flight limit and the time model live in [payloads.md](payloads
 | `scripts/walls.py` | Building-wall coverage check |
 | `scripts/viz3d.py` | 3D HTML view: terrain, paths, every photo footprint |
 | `scripts/plan_outputs.py` | HOME suggestion, KML/CSV/MD summaries, save with supersede |
+| `scripts/low_orbits.py` | Low subject-aimed orbits: building (rounded rectangle) and/or long feature (ellipse) |
+| `scripts/low_orbits_check.py` | Readback check for a low-orbit plan: centre ray vs subject, top view, profile |
 
 ## Workflow
 
@@ -32,7 +34,7 @@ Offer each one in the Q&A; apply only what RH confirms.
 - Motion blur ≤ 0.75 px
 - Fly 15% under the blur-limited speed (`speed_margin`)
 - Trigger every 2 s (the camera's minimum)
-- Manual exposure at f/5.6, Auto ISO
+- Shutter priority, Auto ISO (RH 2026-11-07; replaced manual at f/5.6)
 - RAW
 - Focus at Infinity
 
@@ -51,6 +53,16 @@ Offer each one in the Q&A; apply only what RH confirms.
 - **Orbits:** the ring pitch must aim at the target for that ring's radius and height (`orbits.py` derives it).
 - **Wall check:** runs when `building` is set; pass rule in `walls.py`'s docstring.
 - **Custom DEM = plain waypoints.** Plans are terrain-baked AMSL waypoints from the given DEM, not AMC terrain-follow surveys.
+
+## Low subject-aimed orbits
+
+Close oblique photos of a building or a long feature (wall, embankment), each photo aimed so the subject sits in the centre of the frame. One `.plan` from `scripts/low_orbits.py` (config keys in its docstring).
+
+1. **Takeoff spot.** Ask where the pilot will stand and set `home` there (pitfall #20).
+2. **Hazards Q&A, every time.** Ask for anything taller than the lidar shows or missing from it, each with its height above ground: towers, power poles and lines, light poles, flagpoles, antennas, cranes, and trees (lidar age, growth since flown). Search the aerial and Street View for poles and towers near the path and add every one you find. Each goes in `hazards` with `buffer_m` (default 6 m). `tree_growth_m` (default 2) adds growth to every tall lidar return.
+3. **Defaults to confirm:** slant 30.48 m (100 ft), speed **2 m/s** in every speed field (pilot can take over), photo every `speed × 2 s`, clearance 8 m over the hazard-raised surface, floor 15 m above ground (wires are not in lidar).
+4. **Build**, then run `scripts/low_orbits_check.py`. Pass: every photo's centre ray within 0.5° of its subject; report the share of rays that reach the subject unobstructed and show the top view and profile to RH.
+5. Pilot notes go out with the plan: hazards used, takeoff spot, min height above ground, gimbal check on the first photos.
 
 ## Gimbal rule
 
