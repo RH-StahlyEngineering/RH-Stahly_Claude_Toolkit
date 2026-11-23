@@ -13,7 +13,7 @@ Section names in this file are SKILL.md's. You move each sub-session along its r
 
 **ask-matt decides the route.** Before choosing a command, read Pocock's ask-matt (path: Plan mode step 2) and the SKILL.md of the skill you are about to send. The table is the short form with RH's gates added on top (the implement gate, hard stops); it re-decides nothing. Where it disagrees with ask-matt, follow ask-matt and tell RH the mismatch.
 
-Every session you start on a Pocock route is owed one command: the second message it gets, sent when its start turn ends. Record it at the start (`running add <session> ... --command "<line>"`); the Stop hook holds you until it is confirmed run.
+Every session you start on a Pocock route is owed one command: the second message it gets, sent when its start turn ends. Record it at the start (`running add <session> ... --command "<line>"`): the record waits on the start turn, and once that turn ended (`running started <session>`) the Stop hook holds you until it is confirmed run.
 
 | Route (`--kind`) | Owed command line |
 |---|---|

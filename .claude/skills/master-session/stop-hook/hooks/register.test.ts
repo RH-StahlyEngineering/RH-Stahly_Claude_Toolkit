@@ -161,3 +161,99 @@ test('a store that cannot run or prints rubbish never traps the session', async 
   expect(shown.length).toBe(2)
   expect(shown.join(' ')).toMatch(/stop allowed/)
 })
+
+// --- the turn rules in the system prompt ------------------------------------
+
+const BASE = [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' as const }]
+const STATE_FILE = `${HOME}/.claude/master-session/state.json`
+// What the engine hands a prompt.compose hook: the facts one system prompt is composed from.
+const COMPOSE = { model: 'claude-test', promptModel: 'claude-test', surfaces: [], tools: [], outputStyle: null, traits: [] }
+
+// The state file as this PC holds it: its text, or 'missing', or 'throws' when it cannot be read.
+const stateIs = (on: On, content: string, me = 'master-1', env: Record<string, string> = {}) => {
+  const read: string[] = []
+  on('env.get', (_, e) => ({ value: e.name === 'USERPROFILE' ? HOME : env[e.name] }))
+  on('session.id', () => ({ value: me }))
+  on('fs.exists', () => ({ value: content !== 'missing' }))
+  on('fs.read', (_, e) => {
+    read.push(e.path.replace(/\\/g, '/'))
+    if (content === 'throws') throw new Error('EACCES')
+
+    return { value: content }
+  })
+  on('prompt.compose', () => ({ sections: BASE }))
+
+  return read
+}
+
+test('the owning master gets the turn rules as the last section of its prompt', async ($, on) => {
+  const read = stateIs(on, JSON.stringify({ owner: 'master-1', paused: false }))
+
+  const { sections } = await $.prompt.compose(COMPOSE)
+
+  const last = sections[sections.length - 1]
+  expect(sections.length).toBe(2)
+  expect(sections[0].id).toBe('intro')
+  expect(last.scope).toBe('session')
+  expect(last.id).toBe('master-session-stop:turn-rules')
+  expect(read[0]).toBe(STATE_FILE)
+  for (const part of [/next-step box/, /Nothing needs you:/, /RH did not start/, /Never restate/, /"Received\."/,
+    /state\.py/, /After a compact/, /Ending a turn/, /While RH has an open question/, /State file/]) {
+    expect(last.text).toMatch(part)
+  }
+  expect(last.text.split(/\s+/).length <= 120).toBe(true)
+})
+
+test('the state file named by MASTER_SESSION_STATE is the one read', async ($, on) => {
+  const read = stateIs(on, JSON.stringify({ owner: 'master-1' }), 'master-1', { MASTER_SESSION_STATE: 'D:/x/state.json' })
+
+  const { sections } = await $.prompt.compose(COMPOSE)
+
+  expect(read[0]).toBe('D:/x/state.json')
+  expect(sections.length).toBe(2)
+})
+
+test('a session that is not the owner, or a paused master, gets nothing added', async ($, on) => {
+  let content = JSON.stringify({ owner: 'someone-else', paused: false })
+  on('env.get', (_, e) => ({ value: e.name === 'USERPROFILE' ? HOME : undefined }))
+  on('session.id', () => ({ value: 'master-1' }))
+  on('fs.exists', () => ({ value: true }))
+  on('fs.read', () => ({ value: content }))
+  on('prompt.compose', () => ({ sections: BASE }))
+
+  const other = await $.prompt.compose(COMPOSE)
+  content = JSON.stringify({ owner: 'master-1', paused: true })
+  const paused = await $.prompt.compose(COMPOSE)
+  content = JSON.stringify({ owner: null })
+  const unowned = await $.prompt.compose(COMPOSE)
+
+  expect(other.sections.length).toBe(1)
+  expect(paused.sections.length).toBe(1)
+  expect(unowned.sections.length).toBe(1)
+})
+
+test('a missing, unreadable or damaged state file adds nothing and never blocks the prompt', async ($, on) => {
+  let content = 'missing'
+  on('env.get', (_, e) => ({ value: e.name === 'USERPROFILE' ? HOME : undefined }))
+  on('session.id', () => ({ value: 'master-1' }))
+  on('fs.exists', () => ({ value: content !== 'missing' }))
+  on('fs.read', () => {
+    if (content === 'throws') throw new Error('EACCES')
+
+    return { value: content }
+  })
+  on('prompt.compose', () => ({ sections: BASE }))
+
+  const missing = await $.prompt.compose(COMPOSE)
+  content = 'throws'
+  const unreadable = await $.prompt.compose(COMPOSE)
+  content = '{not json'
+  const damaged = await $.prompt.compose(COMPOSE)
+  content = '[1, 2]'
+  const wrong = await $.prompt.compose(COMPOSE)
+
+  for (const got of [missing, unreadable, damaged, wrong]) {
+    expect(got.sections.length).toBe(1)
+    expect(got.sections[0].id).toBe('intro')
+  }
+})

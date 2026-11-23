@@ -85,7 +85,7 @@ A question you asked RH that he has not answered is the **open question**. Repor
 
 **Every other report is quiet.** Do what it needs (verify it, answer the session), then write RH one short line at most; nothing is fine. No status view, no list of sessions. Add one line for it to the **digest**: what happened, checked at its source first (Verify before relaying) or marked unverified.
 
-**Digest.** The next time you ask RH a new question, put the digest above it under the heading "Since I asked", one line per item, then start a new one.
+**Digest.** Delivery is the store's step, not yours to remember. `ask` for a new question (with `--displace` too), `answered` with no question next, and `idle` each print the pending lines under the heading "Since I asked", record them as delivered and clear them. Put the printed block in that message to RH, heading included, above the question. The panel shows only lines not yet delivered.
 
 **Next-step box.** End every turn, quiet ones included, with the open question in the app's next-step box (`mcp__ccd_turn__wrap_up`): `ask` is the question in short form (100 characters at most), `actions` are the answer buttons, your pick first. With no question open, ask the next one (Ending a turn, What RH is asked next).
 
@@ -107,14 +107,16 @@ Before you end a turn, take every unblocked step that is yours to take (Control 
 2. When the PR pile is full, a merge, with the list of waiting PRs (Limits, Merging).
 3. The plan's top ASK RH row (Leading from the plan).
 
-With none of these, a waiting PR is the question.
+With none of these, a waiting PR he has not approved is the question.
 
 **After RH answers**, act on the answer and ask the next item in the same turn. Don't wait for him to ask what is next.
 
-**Blocked on RH.** When every remaining step waits on him (nothing is yours to take, no session is running), he is told once. Nothing notifies him on demand; the only thing that reaches him, phone included, is the app's own notification when your turn ends. So before ending a turn run `blocked` (State file):
+**Blocked on RH.** When every remaining step waits on him (nothing is yours to take, no session is running), he is told once. Nothing notifies him on demand; the only thing that reaches him, phone included, is the app's own notification when your turn ends. `room` (State file) prints the line when it is due, and the Stop hook sends you back with it if you missed it:
 
-- `send` true: its `line` ("Waiting on you: 4 PRs to approve and 1 question.") is the first line of your closing message, word for word, above the digest and the question. Then run `notified`.
-- `notified` true: he has been told. End the turn as usual and don't repeat or reword the line, even when the counts changed. It comes due again by itself once he has answered something (`answered`) and you block again.
+- The line is due ("Waiting on you: 4 PRs to approve and 1 question."): it is the first line of your closing message, word for word, above the digest and the question. Then run `notified`.
+- He has been told: `room` prints no such line. End the turn as usual and don't repeat or reword it, even when the counts changed. It comes due again by itself once he has answered something (`answered`) and you block again.
+
+A PR he approved is never counted there and never asked about again: its merge is your step (Merging).
 
 Never start a timer to remind him or to look for more work.
 
@@ -124,7 +126,7 @@ Never start a timer to remind him or to look for more work.
 
 For repo work the backlog is the repo's GitHub issues, and you read it as the **plan** only: a ranked page a script prints. One command prints the plan and records what it calls for in your state file (State file):
 
-`python -X utf8 -I scripts/lead.py --repo <owner/name> --areas <the repo's area list>`
+`python -X utf8 -I scripts/lead.py` (repo and area list are remembered; first time: add `--repo <owner/name> --remember`)
 
 Run it when you start leading, right after `init`, and again each time the backlog may have moved: a session ended, a PR merged, RH answered a plan question, a new day. A fresh master (RH invoked you, nothing is pinned, no work described) opens with it. Its **LEAD** list is your work, top row first. Before you take a row, read `references/leading.md`: how to take each kind of row, what to record, and what to do in a repo with no area list.
 
@@ -137,10 +139,11 @@ Run it when you start leading, right after `init`, and again each time the backl
   - `held:#<n>`: one held issue, one short question. Several held issues are several turns, never a list to tick. His answer is his word for the label change, close or comment on that issue (Control model).
 - **Quick wins.** A `win:#<n>` row is one small issue a customer would feel (size S on rung 2 or 3), taken alone and early. It follows its own group's rule: under a spec it is a START NOW row behind the implement gate; standalone it is an ASK RH row needing his go for that one issue.
 - **Focus list.** RH's focus list is the repo's open pinned issue titled "Focus list": up to three groups that go first. When he changes it in a message ("focus on upload and #1066"), edit that issue's body yourself, on his word (none exists: create it with that title and pin it). One list line per group, in his order: `- area:upload`, `- upload` or `- #1066` (a ticket number means its spec's group); text after the name and other lines are his notes. Then run `lead.py` again and tell him any name its FOCUS line reports as not found or over three.
+- **Live-job issues.** An issue labelled `found-in-use` was filed from a live customer Job. Its group ranks right after the focus list (`live job: #a #b` in the plan), groups with more such issues first. The label only moves the group up: each issue still takes its route one step at a time (triage, grill, RH's go, the limits), a held issue stays held, and a frozen group still waits for its grill. Inflation rule (RH's condition): the label goes only on issues that affected or blocked a live Job's output; triage removes it when the issue is judged minor.
 - **Frozen groups.** A group is frozen while an issue in it needs a grill, while its grill is open, and until the grill's spec has been checked against the group's ready issues. Nothing in a frozen group is built, however small it looks and whoever asks: RH is about to change the design it would be built on. The freeze follows the issue: one that also sits in an unfrozen group, or is a quick win, waits too. Say so, and offer the grill. Every other group keeps building.
 - **Grills.** The GRILLS line lists the grills to propose, the one that unfreezes the most ready issues first, then by group rank. Propose them as one question in that order; RH names any number and you start each, one per group. While he sits in grills, keep going: take START NOW rows and ask him your next question every turn. His grills are not a reason to wait. How to record a grill, the spec check and what goes back to triage: `references/leading.md`, Freeze and grills.
 - **Freshness.** A `go:` row says which issues to re-check. After RH's go, give exactly those to a read-only subagent before the start; "checks still stand" means start with no re-check.
-- **Record as you go.** A session you start goes in with `running add ... --group <group> --command "<its route's command>"` (Plan mode step 5); then run `lead.py` again. It leaves out groups that are running and keeps rows you changed, so the state file always says what runs and what waits. Its COMMAND NOT SENT list names each started session still owed its command: send those before any new start.
+- **Record as you go.** Record a step with several facts (a start, a merge, a landing) in one `state.py batch` call (State file, One call per step); then run `lead.py` again. It leaves out groups that are running and keeps rows you changed, so the state file always says what runs and what waits. Its COMMAND NOT SENT list names each started session still owed its command: send those before any new start.
 
 ## Limits
 
@@ -153,7 +156,9 @@ Two numbers keep finished work from piling up on RH faster than he can review it
 
 ## State file
 
-The rule in Ending a turn is enforced: a Stop hook reads your state file and sends you back, once per turn, while a started session is owed its command, closeout or a landed session has an unfinished step, a ready step is untouched or RH has no question. It knows only what you record, so record each change in the step that makes it. The store is `scripts/state.py` (path relative to this skill's folder); you are its only writer, and the hook and the panel only read.
+The rule in Ending a turn is enforced: a Stop hook reads your state file and sends you back, once per turn, while a started session is owed its command, closeout or a landed session has an unfinished step, a PR RH approved is green and unmerged, a ready step is untouched or RH has no question. It knows only what you record, so record each change in the step that makes it. The same mod keeps the turn rules in your system prompt while you own the state file, so they hold after a compact.
+
+**A step that waits is not untouched.** When your next step for a session can only wait on that session's own turn or report, record the wait: `running wait <id> --for "<what you wait for>"`. The hook does not send you back for it; `room` and the panel list it with the time it began. Its turn-end note or report wakes you; your next write about the session (`running sent`, `landed ...`, `running add`) ends the wait, or `running wake <id>`. The same for a PR he approved that cannot merge yet: `prs wait <n> --for "<what>"`, `prs wake <n>`. The store is `scripts/state.py` (path relative to this skill's folder); you are its only writer, and the hook and the panel only read.
 
 `python -X utf8 -I scripts/state.py <command>`. The file is `~/.claude/master-session/state.json`; the owner is your session id, read from `CLAUDE_CODE_SESSION_ID`. A write from any other session is refused. `show` prints the state and `<command> -h` the options.
 
@@ -177,31 +182,60 @@ The rule in Ending a turn is enforced: a Stop hook reads your state file and sen
 | The open question changed | `ask --replace ...` |
 | RH answers it | `answered`, then `ask` the next one, unless it prints a displaced question that is open again |
 | You tell RH nothing needs him | `idle "<what is running>"`. It holds until your next write |
-| You end a turn with something waiting on RH | `blocked` (reads only); when `send` is true, its `line` opens your closing message, then `notified` (Ending a turn) |
+| You end a turn with something waiting on RH | `room` prints the "Waiting on you: ..." line when it is due: it opens your closing message, then `notified` (Ending a turn). `blocked` gives the same answer alone; never run both |
 | The backlog may have moved | `lead.py` (Leading from the plan): it rewrites the plan's `queue`, `go` and `frozen` rows |
 | A step of your own becomes yours to take | `queue add <id> --kind build --group <group> --text "<one line>"`; `--kind` anything else (`check`, `triage`) for work that adds no PR |
 | You took a step, or it is done | `queue drop <id>` |
 | A step turns out to wait on RH, or on something else | `queue add <id> --state needs-rh`, or `--state blocked` |
-| A session starts | `running add <id> --group <g> --kind <build, triage, grill, wayfinder> --command "<the command line it is owed>"` (Plan mode step 5). Mechanical: `--kind mechanical`, no `--command`. Add `--deadline <time>` only when you gave it a time box (Peer protocol, Timer) |
-| Its owed command is confirmed run | `running sent <id>`. Until then it is your untouched step: the hook, `room`, `lead.py` and the panel ("command not sent") name it |
+| A session starts | `running add <id> --group <g> --kind <build, triage, grill, wayfinder> --command "<the command line it is owed>"` (Plan mode step 5). It starts as waiting on its start turn, so ending your turn costs no refusal. Every session gets `--command` or `--no-command "<reason>"`; with neither the hook names it as untouched. `--no-command` is for mechanical work only (Plan mode step 2), and the reason shows on the panel. Add `--deadline <time>` only when you gave it a time box (Peer protocol, Timer) |
+| Its start turn ended and you cannot send the command this turn | `running started <id>`: the command is due, and the hook, `room`, `lead.py` and the panel ("command not sent") name it |
+| Its owed command is confirmed run | `running sent <id>` |
+| Your next step for a session can only wait on its turn or report; the wait is over | `running wait <id> --for "<what>"`; `running wake <id>`, or any other write about that session |
 | A session opens a PR | `running add <id> --pr <n>`; a second PR: the same again |
 | A session ends with no merged PR of its own | `running drop <id>` |
 | A PR waits on RH | `prs add <n> --line "<what it does>" --rung <r> --checks green`. `merges.py` keeps its check state and RH's approval (Merging) |
+| A PR RH approved cannot merge yet (`merges.py check` says no and you can only wait) | `prs wait <n> --for "<what>"`; `prs wake <n>`, or `prs add <n> ...` |
 | A waiting PR is merged; is closed unmerged | `prs drop <n>`: the session that recorded it lands. `prs drop <n> --closed`: no session lands |
-| A landed session's step is done | `landed <id> cleanup`, `running sent <id>` (its retro), `landed <id> candidates <n> --issue <number>`, `landed <id> archived --title "<title>"` (Landed sessions and closeout) |
+| A landed session's step is done | `landed <id> cleanup`, `running sent <id>` (its retro; the candidates step then waits on its report), `landed <id> candidates <n> --issue <number>`, `landed <id> archived --title "<title>"` (Landed sessions and closeout) |
+| One step with several facts | `batch`, the lines on stdin (One call per step) |
 | The retro count or issue number is missing or plainly off | `retro --issue <number> --count <n>` |
 | RH says "close out"; a closeout step is done; after the compact | `closeout start --words "<his message>"`, `closeout done <step>`, `closeout end` (Landed sessions and closeout) |
 | You write the handoff note | `handoff` (reads only): the note's state-derived part, as Markdown |
-| Before you start a session | `room` (reads only): how many sessions may start now, and whether a build may (Limits) |
+| Before you start a session | `room` (reads only): how many sessions may start now and whether a build may (Limits), what waits on which session and since when, approved PRs that are yours to merge, and the blocked line when it is due |
 | A group waits for RH's go, gets it | `go add <group> --line "<issues, sessions>"`, `go drop <group>` |
 | A grill's spec is published; its check is settled | `frozen add <group> --reason "spec check: <spec>"` (it covers every group that grill froze and names them), `frozen drop <group>` per group (`lead.py` records every other freeze itself) |
 | A session waits on RH, is answered | `waiting add <id> --line "<what it needs>"`, `waiting drop <id>` |
-| A quiet report; the digest delivered | `digest add "<line>"`, `digest clear` |
+| A quiet report | `digest add "<line>"`. `ask`, `answered` and `idle` print the pending lines for your message and clear them (While RH has an open question, Digest); `digest clear` drops them unsent |
 | A job ask opens, closes | `jobs add <id> --line "<ask>"`, `jobs drop <id>` |
 | RH changes a limit | `limit prs <n>`, `limit sessions <n>`; each prints the line for RH |
 | A usage limit or low disk bites, clears | `limit lower --reason "<why>"`, `limit restore`; each prints the line for RH (Limits) |
 
-The hook sends you back first for a running session whose `--command` is not yet `sent`: its reason names the session and the command line to send. A running row recorded with no command owes none. Then, while closeout is on, for its next step, and for nothing below until closeout ends; a stop is allowed while its retro question waits on RH. Then for a landed session's next step. Then for a `ready` queue item: a `build` item only while fewer PRs wait on RH than the limit, a place is free under the session cap and its group is not frozen; a `triage` item only while a place is free; any other kind always. With nothing ready it wants either an open question, or nothing waiting on RH (no `needs-rh` item, PR, group or session) and your `idle` line; the item it names to ask is the first in the order of Ending a turn. While `blocked` says `send`, it sends you back once to open with that line. When it sends you back, do what its reason names, then record it. It never holds you while paused or in a session that is not the owner. With no state file (no master has run `init`) it stays silent; a damaged or unreadable file gets a warning and no hold (run `show`, then `init`).
+**One call per step.** `batch` reads sub-command lines from stdin, in the syntax of this table, one per line. It applies them in order under one write and prints each line's output. It stops at the first refused line: the lines before it are kept, and it says which. Quotes work as in a shell; a backslash is a plain character. Three steps that are one call each:
+
+```
+python -X utf8 -I scripts/state.py batch <<'EOF'
+# a start: the session, its command, the row it came from
+running add local_b2 --group area:export --kind build --command "/mattpocock-skills:implement #593"
+queue drop go:area:export
+go drop area:export
+EOF
+```
+
+```
+# a merge: PR 12 merged, so its session lands
+prs drop 12
+digest add "merged: PR 12, CSV columns (checked gh 14:02)"
+```
+
+```
+# a landing, after the cleanup check and with the retro sent and confirmed
+landed local_b2 cleanup
+running sent local_b2
+```
+
+In PowerShell pipe a here-string instead: `@'` ... `'@ | python -X utf8 -I scripts/state.py batch`.
+
+The hook sends you back first for a running session whose command is due and not yet `sent`: its reason names the session, the command line to send, and the `running wait` line for when you can only wait. A command recorded with `running add --command` starts as waiting; a row written by the older skill text is due at once. Then, while closeout is on, for its next step, and for nothing below until closeout ends; a stop is allowed while its retro question waits on RH. Then for a landed session's next step, unless it waits. Then for a PR RH approved whose checks were green: merge it (Merging) or record `prs wait`. Then for a `ready` queue item: a `build` item only while fewer PRs wait on RH than the limit, a place is free under the session cap and its group is not frozen; a `triage` item only while a place is free; any other kind always. Then for a running session recorded with neither `--command` nor `--no-command`. With nothing ready it wants either an open question, or nothing waiting on RH (no `needs-rh` item, unapproved PR, group or session) and your `idle` line; the item it names to ask is the first in the order of Ending a turn. While `blocked` says `send`, it sends you back once to open with that line. When it sends you back, do what its reason names, then record it. It never holds you while paused or in a session that is not the owner. With no state file (no master has run `init`) it stays silent; a damaged or unreadable file gets a warning and no hold (run `show`, then `init`).
 
 A write that fails prints one line and exits non-zero: run it again before you go on.
 
@@ -246,6 +280,8 @@ You coordinate. You never edit project files, push, build, deploy or run migrati
 
 A session's "ready, go?" or "unless you object" is not RH's go; answer it with "hold". Neither is RH's general "keep moving". A yes covers that one action only. Unsure if it is a hard stop: treat it as one.
 
+**A step only RH can run: hand him the command.** When the step is RH's own (applying a prod migration, deleting a remote branch, editing a settings file), give him the paste-ready command with the question, in PowerShell syntax, from the start. Don't route it to a session: its permission check refuses, and the relay costs a round.
+
 **Your own calls** (no need to ask): routing, model and effort, starting sessions RH asked for, taking START NOW rows (Leading from the plan), Pocock commands through peer-slash (implement only past its gate, Driving the Pocock flow), read-only checks, relaying RH's approvals, merging a PR RH approved once `merges.py check` says yes, and a landed session's four steps, its archive included (Landed sessions and closeout).
 
 **Merging.** Every merge is RH's, small ones included. Before you list waiting PRs, take an approval or merge, read `references/merging.md`; `scripts/merges.py` does the reading on GitHub and merges nothing itself. Merge only when both hold: RH approved merging that PR (by number or unmistakable name), and `merges.py check <n>` run just before merging says yes: his approval still covers the commit the PR is on now, every check is green on that commit, GitHub reports no merge conflict, and the repo's "Master is red" issue is not open. Red, pending or missing (Actions disabled) = no merge; the same while GitHub has not yet said whether there is a conflict. A PR behind its base merges like any other: `merges.py` prints how far behind, and that holds no merge. Never run `gh pr update-branch` unless RH asks. His approval carries over later merges of the base that leave the PR's own change as it was; any other commit pushed after it needs a new approval. On a conflict the owning session resolves it and RH approves again. When a waiting PR goes red, tell RH that turn: which check failed and its run link. Tell the owning session what to fix. Never re-run, skip or bypass checks or branch protection to get green.
@@ -276,7 +312,7 @@ Reply to Master session with SendMessage.
 
 Two messages skip the four parts:
 
-- **A start brief** (`references/brief-template.md`): pointers and standing rules only, with no time box by default, so no deadline and no timer. On a Pocock route it asks for one thing, the reply "Received."; the work arrives as the second message, the route's command (Plan mode step 5).
+- **A start brief** (`references/brief-template.md`): pointers and standing rules only, with no time box by default, so no deadline and no timer. It asks for one thing, the reply "Received."; the work arrives as the second message: the route's command, or for mechanical work the list (Plan mode step 5).
 - **A peer-slash command**: the whole message is the command line `/mattpocock-skills:<skill> <args>`, nothing before or after; the mod runs nothing else.
 
 **Timer.** This applies only when you set a time box: the questions above, or a started session you chose to bound (then also `running add ... --deadline <time>`). Every time box you give a session gets a timer, set in the same step as the message that carries it: a one-time wake-up at the deadline (a one-time scheduled task, or the wake-up tool this session has) that names the session and its asks. An idle notice is not a timer; a busy or stuck session never sends one. When the timer fires and no reply came, act then: mark its asks UNKNOWN, get what you can from read-only sources yourself, and move on. A reply that came first makes the timer a no-op.
@@ -295,13 +331,13 @@ RH describes new work and the roster (Start here) has no session for it.
    - broken, flaky, regression: diagnosing-bugs;
    - design question needing a runnable answer: prototype;
    - raw inbound issues piling up: triage;
-   - mechanical (fix list, merge, cleanup): no flow, mechanical brief.
+   - mechanical: only a fix list, merge or cleanup RH approved in his words. No flow, mechanical brief. Anything that writes code for an issue goes down one of the routes above.
 3. **Split.** One sub-session per workstream. Fresh session for a deliverable of its own (branch, PR, job, document) or work RH may steer; fork only for a short thread that needs your context; subagent for anything you need back this turn.
-4. **Brief** each one from `references/brief-template.md`, standing rules always. Every Pocock route (build, spec build, triage, grill, wayfinder, prototype) gets the **pointer brief**: where the work is (the issues, or the spec path), constraints, done criteria, and one instruction: reply exactly "Received." and end the turn. The route's command carries the work (step 5), so the brief stays pointers: the session's first turn ends in seconds and your command is its next message. Mechanical work gets the mechanical brief, which is the work itself.
+4. **Brief** each one from `references/brief-template.md`, standing rules always. Every Pocock route (build, spec build, triage, grill, wayfinder, prototype) gets the **pointer brief**: where the work is (the issues, or the spec path), constraints, done criteria, and one instruction: reply exactly "Received." and end the turn. The route's command carries the work (step 5), so the brief stays pointers: the session's first turn ends in seconds and your command is its next message. Mechanical work gets the mechanical brief: RH's approval and the done condition, the same "Received." instruction, and the list as its second message. Every brief ends with "Received.".
 5. **Start and command.** A Pocock route takes two messages; the second is the one that matters.
    - **Start** each with `start_session`: `initiation: "user_asked"`, `context: "fresh"`, `cwd` the repo or job folder, `use_worktree: true` when it ends in a branch or PR, model and effort per Models and effort, `wake_when_done: true` (the app tells you when its turn ends), `prompt` the brief, `background` its why.
-   - **Record** it in the same step with the command it is owed: `running add <session> --group <group> --kind <kind> --command "<command line>"` (State file). The command per route: `references/pocock-flow.md`, Route commands. A mechanical session: `--kind mechanical`, no `--command`.
-   - **Command.** When its start turn ends (whatever it replied), send the owed command line through peer-slash as the whole message (Peer protocol), confirm it ran (`references/pocock-flow.md`, Sending), then `running sent <session>`. Until then the session is your untouched step and the Stop hook holds you for it.
+   - **Record** it in the same step with the command it is owed: `running add <session> --group <group> --kind <kind> --command "<command line>"` (State file). The command per route: `references/pocock-flow.md`, Route commands. A mechanical session: `--kind mechanical --no-command "<RH's approval, in short>"`.
+   - **Command.** The record starts as waiting on the start turn, so end your turn; the turn-end note wakes you. When the start turn has ended (whatever it replied), send the owed command line through peer-slash as the whole message (Peer protocol), confirm it ran (`references/pocock-flow.md`, Sending), then `running sent <session>`. A mechanical session gets its list as an ordinary message instead. If you cannot send in that turn, run `running started <session>`: the Stop hook then holds you until it is sent.
 6. **Roster.** Add each started session to the Session roster and commit (Ledger).
 
 Hard stops inside a workstream stay RH's (Control model).
@@ -316,7 +352,7 @@ Before you take a landed session's first step, and before closeout's first step,
 
 **Landed.** A session lands when every PR it recorded is merged. Record the number when a session reports its PR (`running add <session> --pr <n>`). The merge reaches the state file two ways: `merges.py list` names the session on the PR's GONE line, or your own `prs drop <n>` after you merged it. From then `room`, `lead.py` and the panel show the session as landed with its next step, and the Stop hook sends you back while a step is unfinished.
 
-A landed session is your own step: four steps in order, each recorded as it is done, with no question to RH.
+A landed session is your own step: four steps in order, each recorded as it is done, with no question to RH. A step that can only wait on the session (its cleanup report, a turn still running) is recorded with `running wait <session> --for "<what>"` (State file); after the retro is sent the store records that wait itself.
 
 1. **Cleanup.** Check that its worktree, its local branches and the merged remote branch are gone (RH's after-merge rule). Something is left: tell the session to clean up and report. Then `landed <session> cleanup`.
 2. **Retro**, for every landed build session: send `/mattpocock-skills:retro` through peer-slash as the whole message, confirm it ran, then `running sent <session>`. The session reports its candidates to you and implements nothing.

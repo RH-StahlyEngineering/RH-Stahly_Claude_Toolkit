@@ -12,9 +12,9 @@ Section names in this file are SKILL.md's. Every script command here is run from
 - `git -C <repo> branch --list <branch>`: empty;
 - `gh api repos/<owner>/<name>/branches/<branch>`: 404.
 
-All gone: `landed <session> cleanup`. Something is left: tell the session, in one message, to remove what you name and report; end the turn, and check again on its turn-end note. Remove nothing yourself. A worktree or branch a ticket links to, or another session's, stays (RH's after-merge rule).
+All gone: `landed <session> cleanup`. Something is left: tell the session, in one message, to remove what you name and report; record `running wait <session> --for "its cleanup report"`, end the turn, and check again on its turn-end note. Remove nothing yourself. A worktree or branch a ticket links to, or another session's, stays (RH's after-merge rule).
 
-**2. Retro.** `cleanup` makes `/mattpocock-skills:retro` the session's owed command, shown as "command not sent" like a route command. Send it as the whole message, confirm it ran (`references/pocock-flow.md`, Sending), then `running sent <session>`. Only a build session gets a retro (`--kind build`, `diagnosing-bugs` runs included); any other landed session goes from cleanup to archive.
+**2. Retro.** `cleanup` makes `/mattpocock-skills:retro` the session's owed command, shown as "command not sent" like a route command. Send it as the whole message, confirm it ran (`references/pocock-flow.md`, Sending), then `running sent <session>`: the store then records that the candidates step waits on its retro report. Only a build session gets a retro (`--kind build`, `diagnosing-bugs` runs included); any other landed session goes from cleanup to archive.
 
 **3. Candidates.** The session reports its retro's candidates to you. Write each on the Retro candidates issue (below), then `landed <session> candidates <n> --issue <number>`, with `<n>` the candidates the retro reported, repeats included (0 when it found none; `--issue` is needed once). Implement none, tell no session to implement one, and ask RH nothing about them: they are his question at closeout.
 

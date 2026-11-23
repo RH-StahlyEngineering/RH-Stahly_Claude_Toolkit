@@ -5,8 +5,9 @@ Section names in this file are SKILL.md's. Every script command here is run from
 ## Reading the plan
 
 - **The plan is the whole read.** `lead.py` prints the plan (groups in ranked order, quick wins, held, parked), then the LEAD list. For one issue's detail, read that issue (`gh issue view <n>`). Listing the backlog yourself (`gh issue list`) fills your context with what the script already ranked.
-- **Area list.** `--areas` is the repo's area list, a JSON file; the repo's `CLAUDE.md` or `docs/agents/` names it. `--base` is the branch merges land on (default `master`).
-- **No area list in the repo.** `lead.py` stops and says so. For that turn only, list the open issues (`gh issue list --state open --json number,title,labels`), show them grouped by triage state, propose the one step you would take first as the turn's question (triage for an unlabelled or `needs-triage` issue, build for `ready-for-agent`), and start nothing before RH's go. Tell RH the repo needs an area list.
+- **Plain `lead.py`.** Run it once as `lead.py --repo <owner/name> --remember`; after that plain `lead.py` is enough (the defaults sit in `lead.json` beside the state file, or in `MASTER_SESSION_REPO` and `MASTER_SESSION_AREAS`). It reads GitHub again on every run. Pinned issues and issues labelled `standing`, `ledger:state` or `ledger:verdicts` are bookkeeping and get no row; a ready issue with an open PR is listed under IN REVIEW, one whose PR merged while it stayed open is a `held:` question.
+- **Area list.** Without `--areas` it is the repo's own `docs/agents/areas.json`, read from GitHub; `--areas` names another JSON file. `--base` is the branch merges land on (default `master`).
+- **No area list in the repo.** `lead.py` still runs: an `AREAS` notice says so and every issue outside a spec is in `unsorted`. Lead from that list, and tell RH the repo needs an area list.
 - **Not in a repo.** Ask RH which repo, as the turn's question.
 - **Side conversation.** `lead.py` refuses a session that is not the owner. To read the plan there, run `python -X utf8 -I scripts/planner.py` with the same `--repo` and `--areas`; it writes nothing.
 - **A run that fails.** An unreadable area list or snapshot, or a `gh` failure, prints one line and records nothing. Fix what it names and run it again; a `gh` failure that stays is a tooling gap for RH.
@@ -33,7 +34,9 @@ Rows come in the plan's ranked order: focus groups, groups with a rung 1 or 2 is
 
 Before a start, `state.py room` says whether it fits the limits (Limits): a `build:` row, a quick win or a go waits while the PR pile is full, and no session starts at the cap. `lead.py` prints the same lines under its list, and above it, under COMMAND NOT SENT, each started session whose command is not confirmed run: send those first. Under LANDED it prints each landed session with its next step (SKILL.md Landed sessions and closeout), and a CLOSEOUT line while closeout is on: then nothing in the list starts. A started session gets no time box by default; add `--deadline <time>` only when you gave it one (Peer protocol, Timer).
 
-**Quick wins.** The lane holds single issues of size S on rung 2 or 3, found-in-use and newest first. A win is offered once, as its own row, and left out of its group's row. It is held, blocked or frozen exactly as it would be in its group: a held one stays a `held:` question, one in a frozen group waits for the grill.
+**Quick wins.** The lane holds single issues of size S on rung 2 or 3, found-in-use and newest first. A win is offered once, as its own row, and left out of its group's row. It is held, blocked or frozen exactly as it would be in its group: a held one stays a `held:` question, one in a frozen group waits for the grill. The lane comes after the focus, live-Job and rung 1-2 groups, so a found-in-use win is normally offered with its live-Job group first.
+
+**Live-Job issues.** A group holding an open `found-in-use` issue (filed from a live customer Job, with a step still to take) ranks right after the focus list: groups with more such issues first, then the order they would have had. The plan shows `live job: #a #b` for it. Such an issue with no listed area ranks alone, as group `issue:#<n>`, so it does not pull every unsorted issue up with it. The boost only reorders. It skips no step of an issue's route (triage, grill and wayfinder rows come as for any group), lifts no freeze (a frozen group still waits for its grill and spec check), lifts no hold (no Verdict still waits for the overnight check) and bypasses neither RH's go nor the limits. Inflation rule (RH's condition): the label goes only on issues that affected or blocked a live Job's output; triage removes it when the issue is judged minor. When a brief goes to a session working a live Job, include the Live Job line of `references/brief-template.md`.
 
 After any of these, run `lead.py` again. Done when every START NOW row is taken and RH has the first ASK RH row as his one question.
 
@@ -75,7 +78,7 @@ The overnight check stands when nothing merged into the group's files and no spe
 
 The WAITING line counts what is nobody's step now:
 
-- **No Verdict yet:** ready issues the overnight check has not reached. They wait for it; they are not questions and not started.
+- **No Verdict yet:** ready issues the overnight check has not reached. They wait for it; they are not questions and not started. A Verdict is read from the `verdict:` label, the bot's comment on the issue, or the bot's comment for it on the repo's `ledger:verdicts` issue; a `VERDICTS` line in the plan means that issue could not be read this run.
 - **`ready-for-human`:** RH's own work. Show it when he asks.
 - **Set aside:** rows you marked `blocked`. `queue drop <id>` brings one back at the next run.
 

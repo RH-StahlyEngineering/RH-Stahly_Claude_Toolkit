@@ -9,9 +9,13 @@ the state file is damaged or unreadable. With no state file (no master has run `
 on this PC) it allows and says nothing. It always exits 0 and never refuses on a failure.
 """
 import argparse
+import contextlib
+import copy
+import io
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 import time
@@ -40,8 +44,9 @@ UNSORTED = "unsorted"         # the group of issues with no listed area: never f
 # name -> (key field, other fields). Every row is a dict; `add` upserts by key.
 COLLECTIONS = {
     "queue": ("id", ("text", "group", "kind", "state")),      # next items, ranked
-    # running sessions; `command`: the one it is owed; `pr`: the PRs it opened (`merged` and `landed` follow them)
-    "running": ("id", ("group", "kind", "deadline", "command", "pr")),
+    # running sessions; `command`: the one it is owed, or `no_command`: why it has none; `pr`: the PRs it opened
+    # (`merged` and `landed` follow them); `wait`: {for, since} while its next step waits on the session's own turn
+    "running": ("id", ("group", "kind", "deadline", "command", "no_command", "pr")),
     "prs": ("number", ("line", "rung", "checks", "approved", "head")),  # PRs waiting on RH (merges.py)
     "go": ("group", ("line",)),                               # groups waiting for RH's go
     "frozen": ("group", ("reason",)),                         # frozen groups
@@ -63,6 +68,11 @@ LANDED_STEPS = ("cleanup", "retro", "candidates", "archive")
 CLOSEOUT_STEPS = ("question", "fixes", "landed", "handoff", "said")
 CLOSEOUT_LINE = "Closeout done. Compact me or start a new master."
 HANDOFF_DIR = r".scratch\handoffs"  # in the ledger repo
+START_WAIT = "its start turn to end"  # the wait a session starts in: its command is due once that turn ended
+RETRO_WAIT = "its retro report"       # the wait after its retro is sent: the candidates step is due with the report
+DIGEST_HEAD = "Since I asked"
+# Commands `batch` takes no line of: they read, or they decide who owns the file.
+NOT_IN_BATCH = ("stop", "show", "handoff", "blocked", "room", "init", "take", "batch")
 
 
 class Refused(Exception):
@@ -83,7 +93,8 @@ def new_state(owner=None):
         "displaced": [],             # questions a hard stop displaced, the last one comes back first
         "nothing_needed_said": None,  # the master's "Nothing needs you: ..." line, until the next change
         **{name: [] for name in COLLECTIONS},
-        "digest": [],                # "since I asked" lines
+        "digest": [],                # "since I asked" lines not yet delivered to RH
+        "digest_delivered": None,    # {at, lines}: the lines the store last printed for delivery
         "limits": {"prs": 5, "sessions": 6, "lowered_sessions": None, "lowered_reason": None},
         "blocked_notified": False,
         "retro": {"issue": None, "count": 0},  # the Retro candidates issue and how many wait on it for RH
@@ -193,6 +204,16 @@ def room(state):
                                             if pile_full and free else "") + ".")
     landed = [{"id": s.get("id"), "prs": s["pr"], "next": landed_next(s)} for s in landed_sessions(state)]
     lines += [landed_line(s) + "." for s in landed_sessions(state)]
+    lines += [f"No command, no reason: {s.get('id')}. Add: running add {s.get('id')} --command \"<line>\" "
+              "(or --no-command \"<reason>\")." for s in unsettled(state)]
+    approved = [p for p in state["prs"] if p.get("approved")]
+    yours = [f"#{p.get('number')}" for p in merge_steps(state)]
+    checks = [f"#{p.get('number')} ({p.get('checks') or 'not read'})" for p in approved if p.get("checks") != "green"]
+    if yours:
+        lines.append(f"Approved by RH, yours to merge: {' '.join(yours)} (merges.py check <n>).")
+    if checks:
+        lines.append(f"Approved by RH, waiting on checks: {' '.join(checks)}.")
+    lines += [wait_line(state, w) for w in waits(state)]
     retro = state["retro"]
     if retro["count"]:
         lines.append(f"Retro candidates: {retro['count']} on issue #{retro['issue']}. RH sees them at closeout.")
@@ -200,7 +221,8 @@ def room(state):
             "lowered_reason": limits.get("lowered_reason") if lowered else None,
             "build_starts": 0 if pile_full else free, "other_starts": free, "lines": lines,
             "owed": [{"id": s.get("id"), "command": s.get("command")} for s in owed_commands(state)],
-            "landed": landed, "closeout": closing, "closeout_on": bool(state["closeout"])}
+            "landed": landed, "closeout": closing, "closeout_on": bool(state["closeout"]),
+            "waits": waits(state), "unsettled": [s.get("id") for s in unsettled(state)]}
 
 
 def owed_commands(state):
@@ -209,6 +231,44 @@ def owed_commands(state):
     A row with no `command` (a mechanical session, or one written by a master on the older skill text) owes nothing.
     """
     return [s for s in state["running"] if s.get("command") and not s.get("command_sent")]
+
+
+def unsettled(state):
+    """Running sessions this store recorded with neither a command nor a reason for none: the master's step.
+    A row written before that rule (no mark) is left alone."""
+    return [s for s in state["running"] if s.get("command_missing")]
+
+
+def is_waiting(row):
+    """True while the row's next step is recorded as waiting on something that is not the master's to do."""
+    return isinstance(row.get("wait"), dict)
+
+
+def waits(state):
+    """Every recorded wait, sessions first then PRs: {id, for, since}. Shown by `room` and the panel, so none is silent."""
+    out = [{"id": s.get("id"), "for": s["wait"].get("for"), "since": s["wait"].get("since")}
+           for s in state["running"] if is_waiting(s)]
+    return out + [{"id": f"PR #{p.get('number')}", "for": p["wait"].get("for"), "since": p["wait"].get("since")}
+                  for p in state["prs"] if is_waiting(p)]
+
+
+def wait_line(state, wait):
+    sid = wait["id"]
+    if str(sid).startswith("PR #"):
+        return f"Waiting on {sid} since {wait['since']}: {wait['for']}. Over: prs wake {sid[4:]}."
+    row = next((s for s in state["running"] if s.get("id") == sid), {})
+    start = row.get("command") and not row.get("command_sent") and not is_landed(row)  # then its command is due
+    return (f"Waiting on session {sid} since {wait['since']}: {wait['for']}. "
+            f"Over: running {'started' if start else 'wake'} {sid}.")
+
+
+def merge_steps(state):
+    """PRs RH approved whose checks were green when last read: the merge is the master's step, never RH's."""
+    return [p for p in state["prs"] if p.get("approved") and p.get("checks") == "green" and not is_waiting(p)]
+
+
+def _now():
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def owed_line(session):
@@ -254,6 +314,8 @@ def mark_merged(state, number):
         was = is_landed(session)
         session["merged"] = sorted({*(session.get("merged") or []), number})
         if is_landed(session):
+            if not was:
+                session.pop("wait", None)  # what it waited on is behind it: its landed steps start now
             said.append(f"session {session.get('id')} has landed, next: {landed_next(session)}"
                         + ("" if was else f" (its steps are yours, in order: {', '.join(LANDED_STEPS)})"))
         else:
@@ -268,25 +330,27 @@ def landed_reason(state, session):
     more = len(landed_sessions(state)) - 1
     head = (f"session {sid} has landed ({_prs(session['pr'])} merged) and its next step is yours, untouched"
             + (f" ({more} more landed after it)" if more > 0 else "") + ": ")
+    wait = (" You can only wait on the session (its turn still runs, or its report has not come): "
+            f"`{run} running wait {sid} --for \"<what you wait for>\"`, then end your turn; its note brings you back.")
     if step == "cleanup":
         return head + (
             "confirm its cleanup: its worktree, its local branches and the merged remote branch are gone "
             f"(the after-merge rule). All gone: `{run} landed {sid} cleanup`. Something left: tell the session to "
-            "clean it up and report, then end your turn; its turn-end note brings you back.")
+            "clean it up and report." + wait)
     if step == "retro":
         return head + (
             f"send it `{RETRO}` through peer-slash as the whole message, confirm it ran "
             f"(references/pocock-flow.md, Sending), then `{run} running sent {sid}`. The session reports its "
-            "candidates to you and implements nothing.")
+            "candidates to you and implements nothing." + wait)
     if step == "candidates":
         return head + (
             f"write the candidates its retro reported on the pinned \"{RETRO_ISSUE}\" issue (one line each with the "
             "session and the date; a repeat raises that line's count), then "
-            f"`{run} landed {sid} candidates <how many> --issue <the issue's number>`. No report yet: end your turn; "
-            "its turn-end note brings you back. None of this is a question to RH.")
+            f"`{run} landed {sid} candidates <how many> --issue <the issue's number>`. "
+            "None of this is a question to RH." + wait)
     return head + (
         f"archive it without asking RH (`archive_session`), move its roster row to Archive, then "
-        f"`{run} landed {sid} archived --title \"<its title>\"`: that adds the digest line.")
+        f"`{run} landed {sid} archived --title \"<its title>\"`: that adds the digest line." + wait)
 
 
 def closeout_next(state):
@@ -324,9 +388,12 @@ def closeout_verdict(state):
             f"RH chose none: `{run} closeout done fixes --skip \"<why>\"`.")}
     if step == "landed":
         landed = landed_sessions(state)
-        if landed:
+        due = [s for s in landed if not is_waiting(s)]
+        if due:
             return {"decision": "refuse", "reason": "Master session: Closeout, finish every landed session: "
-                    + landed_reason(state, landed[0])}
+                    + landed_reason(state, due[0])}
+        if landed:
+            return {"decision": "allow", "why": "closeout waits on a landed session's turn"}
         return {"decision": "refuse", "reason": head + f"no landed session is left. Record it: `{run} closeout done landed`."}
     if step == "handoff":
         return {"decision": "refuse", "reason": head + (
@@ -353,6 +420,10 @@ def handoff_text(state, now=None):
             bits.append(f"landed, next: {landed_next(s)}")
         if s.get("command") and not s.get("command_sent"):
             bits.append(f"command not sent: {s['command']}")
+        if s.get("no_command"):
+            bits.append(f"no command: {s['no_command']}")
+        if is_waiting(s):
+            bits.append(f"the master waits on {s['wait'].get('for')} since {s['wait'].get('since')}")
         if s.get("deadline"):
             bits.append(f"time box until {s['deadline']}")
         running.append(f"- {s.get('id')}: {', '.join(bits)}. TO ADD: last verified state, with the time")
@@ -366,6 +437,11 @@ def handoff_text(state, now=None):
            "Printed from the state file; the TO ADD lines are filled in by the master that wrote this note.", ""]
     out += part("Running", running)
     out += part("Waiting on RH", [f"- {line}" for line in waiting_on_rh(state)])
+    approved = [p for p in state["prs"] if p.get("approved")]
+    if approved:  # the master's: merge when `merges.py check` says yes
+        out += part("PRs RH approved, yours to merge",
+                    [f"- PR {p.get('number')}: checks {p.get('checks') or 'not read'}; approved {p['approved']}"
+                     for p in approved])
     out += part("Open question", question)
     out += part("Monitors and timers to re-arm",
                 [f"- time box of {s.get('id')} until {s['deadline']}" for s in state["running"] if s.get("deadline")],
@@ -430,10 +506,12 @@ def waiting_on_rh(state):
 
     Sessions waiting on him first (a hard stop needs his yes); then, when the PR pile is full, a merge;
     then the plan's `needs-rh` rows, top row first. SKILL.md gives the same order (Ending a turn).
+    A PR he approved is not his any more: its merge is the master's step (`merge_steps`), or it waits on its checks.
     """
     lines = [f"session {s.get('id')}: {s.get('line') or 'waiting on him'}" for s in state["waiting"]]
-    prs = [f"PR {p.get('number')}: {p.get('line') or 'waiting on his decision'}" for p in state["prs"]]
-    if prs and len(prs) >= state["limits"]["prs"]:
+    prs = [f"PR {p.get('number')}: {p.get('line') or 'waiting on his decision'}"
+           for p in state["prs"] if not p.get("approved")]
+    if prs and len(state["prs"]) >= state["limits"]["prs"]:
         prs[0] = f"merge, the PR pile is full ({RUN}merges.py list shows it): {prs[0]}"
         lines, prs = lines + prs, []
     lines += [f"{i.get('text') or i.get('id')}" for i in state["queue"] if i.get("state") == "needs-rh"]
@@ -457,14 +535,15 @@ def blocked_report(state):
     questions = sum(1 for i in state["queue"] if i.get("state") == "needs-rh" and i.get("id") not in offers)
     questions += len(state["waiting"])
     parts = []
-    if state["prs"]:
-        parts.append(_count(len(state["prs"]), "PR to approve", "PRs to approve"))
+    asks = [p for p in state["prs"] if not p.get("approved")]  # an approved PR is the master's merge, or waits on checks
+    if asks:
+        parts.append(_count(len(asks), "PR to approve", "PRs to approve"))
     if state["go"]:
         parts.append(_count(len(state["go"]), "group waiting for your go", "groups waiting for your go"))
     if questions or (state["question"] and not parts):
         parts.append(_count(questions or 1, "question", "questions"))
     blocked = (bool(parts) and not state["paused"] and not state["running"] and not owed_commands(state)
-               and not untouched_steps(state))
+               and not untouched_steps(state) and not merge_steps(state))
     notified = bool(state.get("blocked_notified"))
     line = None
     if blocked:
@@ -480,22 +559,34 @@ def decide(state, message):
         return {"decision": "allow", "why": "paused"}
     if message.get("stop_hook_active"):
         return {"decision": "allow", "why": "already sent back this turn"}
-    owed = [s for s in owed_commands(state) if not is_landed(s)]  # a landed session's retro is its own step, below
+    # A step recorded as waiting on its session's turn is not untouched. A landed session's retro is its own step, below.
+    owed = [s for s in owed_commands(state) if not is_landed(s) and not is_waiting(s)]
     if owed:
         first = owed[0]
         more = f" ({len(owed) - 1} more after it)" if len(owed) > 1 else ""
         return {"decision": "refuse", "reason": (
             f"Master session: session {first.get('id')} is owed its command and it is not confirmed run{more}: "
-            f"`{first.get('command')}`. When its start turn has ended, send that line through peer-slash as the "
+            f"`{first.get('command')}`. Send that line through peer-slash as the "
             "whole message, confirm it ran (references/pocock-flow.md, Sending), then record it: "
-            f"`{RUN}state.py running sent {first.get('id')}`. Its start turn still runs: end your turn; "
+            f"`{RUN}state.py running sent {first.get('id')}`. Its turn still runs and you can only wait: "
+            f"`{RUN}state.py running wait {first.get('id')} --for \"<what you wait for>\"`, then end your turn; "
             "its turn-end note brings you back."
         )}
     if state["closeout"]:
         return closeout_verdict(state)
-    landed = landed_sessions(state)
+    landed = [s for s in landed_sessions(state) if not is_waiting(s)]
     if landed:
         return {"decision": "refuse", "reason": "Master session: " + landed_reason(state, landed[0])}
+    merges = merge_steps(state)
+    if merges:
+        n = merges[0].get("number")
+        more = f" ({len(merges) - 1} more after it)" if len(merges) > 1 else ""
+        return {"decision": "refuse", "reason": (
+            f"Master session: RH approved PR #{n} and its checks were green{more}: the merge is your step, not a "
+            f"question for him. Run `{RUN}merges.py check {n} --repo <owner/name>`; on yes merge it, then "
+            f"`{RUN}state.py prs drop {n}`. It says no and you can only wait (checks, a red master): "
+            f"`{RUN}state.py prs wait {n} --for \"<what you wait for>\"`."
+        )}
     steps = untouched_steps(state)
     if steps:
         step = steps[0]
@@ -505,6 +596,16 @@ def decide(state, message):
             f"Take it now (Ending a turn), then record it: `{RUN}state.py queue drop "
             f"{step.get('id')}` once started or done, or `{RUN}state.py queue add {step.get('id')} --state needs-rh` "
             "(or blocked) if it turns out not to be yours to take."
+        )}
+    bare = unsettled(state)  # after the ready steps: the session runs, only its record is short
+    if bare:
+        sid = bare[0].get("id")
+        more = f" ({len(bare) - 1} more after it)" if len(bare) > 1 else ""
+        return {"decision": "refuse", "reason": (
+            f"Master session: session {sid} is recorded with no command and no reason for none{more}. Work that "
+            f"writes code for an issue goes down a Pocock route: `{RUN}state.py running add {sid} --command "
+            "\"<its route's command>\"`, then send it after its \"Received.\". Only a fix list, merge or cleanup RH "
+            f"approved in his words has none: `{RUN}state.py running add {sid} --no-command \"<reason>\"`."
         )}
     report = blocked_report(state)
     tell = (f"the first line of your closing message must be `{report['line']}` (the app's turn-end notification "
@@ -597,6 +698,32 @@ def _spec_check_groups(rows, group):
     return []
 
 
+def _say(args, text, first=False):
+    """Add `text` to what the command prints, each on a line of its own."""
+    had = getattr(args, "said", None)
+    args.said = "\n".join(part for part in ((text, had) if first else (had, text)) if part)
+
+
+def _deliver_digest(state, args):
+    """Hand the pending digest to the master for this message to RH: printed under its heading, recorded as
+    delivered, cleared. Delivery is the store's step, so the master has none to remember."""
+    lines = [str(line) for line in state["digest"]]
+    if not lines:
+        return
+    state["digest_delivered"] = {"at": _now(), "lines": lines}
+    state["digest"] = []
+    _say(args, "\n".join([DIGEST_HEAD, *(f"- {line}" for line in lines),
+                          "Put the block above, heading included, in your message to RH this turn (above the "
+                          "question, when you ask one). It is now recorded as delivered and cleared."]), first=True)
+
+
+def _row_or_refuse(rows, key, value, what, how):
+    row = next((r for r in rows if str(r.get(key)) == str(value)), None)
+    if row is None:
+        raise Refused(f"no {what} '{value}' is recorded: {how}")
+    return row
+
+
 def apply(state, args):
     """Change `state` as one writing command asks. Raises Refused."""
     cmd = args.command
@@ -637,13 +764,18 @@ def apply(state, args):
                          "wait-what style: --explain is the full one (a little context, the decision, the options and "
                          "what each causes, the pick and why), --explain-short the same in three to five sentences. "
                          "Give both: `ask --replace --short ... --explain ... --explain-short ... --pick ...`.")
+        if not args.replace:  # a new question: the digest goes above it
+            _deliver_digest(state, args)
     elif cmd == "answered":
         state["question"] = state["displaced"].pop() if state["displaced"] else None
         if state["question"]:
             args.said = f"Open again, the question this one displaced: {state['question'].get('short')}"
+        else:
+            _deliver_digest(state, args)
         state["blocked_notified"] = False
     elif cmd == "idle":
         state["nothing_needed_said"] = args.text
+        _deliver_digest(state, args)
     elif cmd == "notified":
         state["blocked_notified"] = True
     elif cmd == "digest":
@@ -672,8 +804,20 @@ def apply(state, args):
     elif cmd in COLLECTIONS:
         key, fields = COLLECTIONS[cmd]
         rows = state[cmd]
-        if cmd == "prs" and args.action in ("add", "drop"):
+        if cmd == "prs" and args.action in ("add", "drop", "wait", "wake"):
             args.key = str(_pr_number(args.key))
+        if args.action in ("wait", "wake", "started"):
+            row = _row_or_refuse(rows, key, args.key, "running session" if cmd == "running" else "waiting PR",
+                                 f"`{cmd} add {args.key} ...` first")
+            row.pop("wait", None)
+            if args.action == "wait":
+                row["wait"] = {"for": args.wait_for, "since": args.at or _now()}
+            elif args.action == "started":
+                if row.get("command") and not row.get("command_sent"):
+                    args.said = (f"Session {args.key}'s start turn ended: send `{row['command']}` through peer-slash "
+                                 f"as the whole message now, confirm it ran, then `running sent {args.key}`.")
+                else:
+                    args.said = f"Session {args.key} is owed no command now: nothing to send."
         if cmd == "prs" and args.action == "drop" and not args.closed:
             landed = mark_merged(state, int(args.key))  # dropped after its merge: the session that built it lands
             if landed:
@@ -697,8 +841,12 @@ def apply(state, args):
                 if "kind" not in given:
                     raise Refused(f"a new queue item needs --kind: {KINDS_HELP}")
                 given = {"text": args.key, "group": None, "state": "ready", **given}
+            is_new = not any(str(r.get(key)) == args.key for r in rows)
             if cmd == "running":
                 _one_grill_per_group(rows, args.key, given)
+                if "command" in given and "no_command" in given:
+                    raise Refused("a session has its command (`--command`) or the reason it has none "
+                                  "(`--no-command`), not both")
                 if "command" in given:
                     given["command_sent"] = False
             also = []
@@ -709,28 +857,45 @@ def apply(state, args):
             if also:
                 args.said = (f"Spec check recorded for {args.key} and for {', '.join(also)}: the same grill froze "
                              "them. Each gets its own spec-check row; drop each freeze when its check is settled.")
+            if cmd == "prs":
+                next(r for r in rows if str(r.get(key)) == args.key).pop("wait", None)  # a write about it: it waits no more
             if cmd == "running":
                 row = next(r for r in rows if str(r.get(key)) == args.key)
-                if row.get("kind") in OWED_KINDS and not row.get("command"):
+                row.pop("wait", None)  # a write about the session: what the master waited on has moved
+                if "command" in given:  # owed, and waiting: the master sends it when the start turn ends
+                    row["wait"] = {"for": START_WAIT, "since": _now()}
+                    row.pop("no_command", None)
+                elif "no_command" in given:
+                    row.pop("command", None)
+                    row.pop("command_sent", None)
+                settled = row.get("command") or row.get("no_command")
+                if settled:
+                    row.pop("command_missing", None)
+                elif is_new:  # a row from before this rule is left as it was
+                    row["command_missing"] = True
+                if not settled and (is_new or row.get("command_missing") or row.get("kind") in OWED_KINDS):
                     # recorded all the same: a master on the older wording must not be stopped
-                    args.said = (f"Recorded, but with no owed command: a {row['kind']} session gets its route's "
-                                 f"command as its second message. Add it: `running add {args.key} --command "
-                                 '"/mattpocock-skills:<skill> <args>"`, then `running sent` once it ran.')
+                    args.said = (f"Recorded, but with no command and no reason for none: the Stop hook holds you "
+                                 f"for it. A session gets its route's command as its second message: `running add "
+                                 f'{args.key} --command "/mattpocock-skills:<skill> <args>"`, then `running sent` '
+                                 "once it ran. Only a fix list, merge or cleanup RH approved in his words has none: "
+                                 f'`running add {args.key} --no-command "<reason>"`.')
         elif args.action == "sent":
-            row = next((r for r in rows if str(r.get(key)) == args.key), None)
-            if row is None:
-                raise Refused(f"no running session '{args.key}' is recorded: `running add {args.key} ...` first")
+            row = _row_or_refuse(rows, key, args.key, "running session", f"`running add {args.key} ...` first")
+            row.pop("wait", None)
             if row.get("command"):
                 row["command_sent"] = True
                 if is_landed(row) and row["command"] == RETRO and "cleanup" in (row.get("landed") or []):
-                    row["landed"] = [*row["landed"], "retro"] if "retro" not in row["landed"] else row["landed"]
+                    if "retro" not in row["landed"]:  # its report wakes the master: candidates wait on it
+                        row["landed"] = [*row["landed"], "retro"]
+                        row["wait"] = {"for": RETRO_WAIT, "since": _now()}
             else:
                 args.said = f"Session {args.key} has no owed command recorded: nothing to confirm."
         elif args.action == "drop":
             state[cmd] = [r for r in rows if str(r.get(key)) != args.key]
         elif args.action == "clear":
             state[cmd] = []
-        else:  # set
+        elif args.action == "set":
             try:
                 new_rows = json.loads(args.stdin_text)
             except ValueError as err:
@@ -754,6 +919,7 @@ def _landed_step(state, args):
             "Archiving a session whose PR is not merged, or that still has work, is a question to RH (Archive offer).")
     step = "archive" if args.step == "archived" else args.step
     done, due = row.setdefault("landed", []), landed_next(row)
+    row.pop("wait", None)  # a write about the session: it waits no more (a refused write saves nothing)
     if step == "archive" and args.skip:  # the session is gone: its remaining steps cannot run
         state["running"] = [r for r in state["running"] if r is not row]
         state["digest"].append(f"archived: {args.title} (steps skipped: {args.skip})")
@@ -880,6 +1046,61 @@ def write_command(path, session, args):
     save(path, state)
 
 
+def _batch_line(parser, line):
+    """One batch line as parsed arguments. Raises Refused for a line that does not parse or does not write."""
+    lex = shlex.shlex(line, posix=True)
+    lex.whitespace_split, lex.escape, lex.commenters = True, "", ""  # a backslash is a plain character: Windows paths
+    try:
+        words = list(lex)
+    except ValueError as err:
+        raise Refused(f"the line does not parse ({err}): check its quotes") from None
+    told = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(told), contextlib.redirect_stdout(io.StringIO()):
+            args = parser.parse_args(words)
+    except SystemExit:
+        why = (told.getvalue().strip().splitlines() or ["it asks for help, which writes nothing"])[-1]
+        raise Refused(f"the line does not parse ({why})") from None
+    if args.command in NOT_IN_BATCH:
+        raise Refused(f"`{args.command}` is not a writing command: run it by itself")
+    if args.command in COLLECTIONS and args.action == "set":
+        raise Refused(f"`{args.command} set` reads its rows from stdin: run it by itself")
+    return args
+
+
+def batch(path, session, text, out=print):
+    """Apply the sub-command lines in `text` in order under one load and one save. Stops at the first refused
+    line: the lines before it are kept, it and the lines after it are not run. Returns the exit code."""
+    state = owned_state(path, session)
+    lines = [line.strip() for line in text.lstrip("﻿").splitlines()]
+    lines = [line for line in lines if line and not line.startswith("#")]
+    parser, applied, refused = build_parser(), 0, False
+    for n, line in enumerate(lines, 1):
+        out(f"[{n}] {line}")
+        try:
+            args = _batch_line(parser, line)
+            trial = copy.deepcopy(state)  # a refused line leaves nothing of itself behind
+            apply(trial, args)
+        except Refused as err:
+            out(f"[{n}] refused: {err}")
+            refused = True
+            break
+        state, applied = trial, n
+        if getattr(args, "said", None):
+            out(args.said)
+    if applied:
+        save(path, state)
+    if not refused:
+        out(f"Applied all {_count(len(lines), 'line', 'lines')}." if lines else "No line to apply.")
+        return 0
+    kept = "no line" if not applied else "line 1" if applied == 1 else f"lines 1-{applied}"
+    rest = len(lines) - applied - 1
+    left = "" if not rest else (f"; line {applied + 2} not run" if rest == 1
+                                else f"; lines {applied + 2}-{len(lines)} not run")
+    out(f"Applied {kept} of {len(lines)}; line {applied + 1} refused{left}. Correct it and run the rest again.")
+    return 2
+
+
 def set_rows(path, session, collections):
     """Replace whole collections ({name: rows}) in one write, as the owner. Raises Refused."""
     state = owned_state(path, session)
@@ -937,8 +1158,14 @@ def build_parser():
     op.add_argument("--skip", metavar="WHY", help="question: no candidates; fixes: RH chose none")
     op.add_argument("--file", help="handoff: the note's path")
     osub.add_parser("end", help="after the compact: clear the closeout mark")
-    sub.add_parser("blocked", help="whether every remaining step waits on RH, the line that tells him, and whether to send it")
-    p = sub.add_parser("room", help="what may start now under the two limits (anyone may read)")
+    sub.add_parser("blocked", help="whether every remaining step waits on RH, the line that tells him, and whether "
+                                   "to send it. `room` gives the same answer: no need to run both")
+    sub.add_parser("batch", help="record a whole step in one call: sub-command lines on stdin, same syntax as here, "
+                                 "one per line (quotes as in a shell, a backslash is a plain character, `#` starts "
+                                 "a comment line). Applied in order under one write; stops at the first refused "
+                                 "line and keeps the lines before it")
+    p = sub.add_parser("room", help="what may start now under the two limits, what waits on which session, and "
+                                    "the blocked answer (anyone may read)")
     p.add_argument("--json", action="store_true", help="the counts as JSON instead of lines")
     p.add_argument("--disk", metavar="PATH", help=f"also check free disk at PATH (the repo) against the worktree floor "
                                                   f"(${FLOOR_ENV}, default {DEFAULT_FLOOR_GB:g} GB)")
@@ -998,7 +1225,12 @@ def build_parser():
             elif (name, field) == ("running", "command"):
                 add.add_argument("--command", dest="owed_command", metavar="LINE",
                                  help="the slash command line this session is owed as its second message, e.g. "
-                                      '"/mattpocock-skills:implement #593"; none for a mechanical session')
+                                      '"/mattpocock-skills:implement #593". It starts waiting on the start turn: '
+                                      "`running started` when that turn ended, `running sent` once the command ran")
+            elif (name, field) == ("running", "no_command"):
+                add.add_argument("--no-command", dest="no_command", metavar="REASON",
+                                 help="why this session is owed no command: only a fix list, merge or cleanup RH "
+                                      "approved in his words. One of --command and --no-command is needed")
             elif (name, field) == ("running", "pr"):
                 add.add_argument("--pr", action="append", metavar="N",
                                  help="a PR this session opened; repeat for more, a later call adds to them")
@@ -1007,6 +1239,17 @@ def build_parser():
         if name == "running":
             csub.add_parser("sent", help="the session's owed command is confirmed run").add_argument(
                 "key", metavar=key.upper())
+            csub.add_parser("started", help="the session's start turn ended: its owed command is due now").add_argument(
+                "key", metavar=key.upper())
+        if name in ("running", "prs"):
+            what = "session's turn or report" if name == "running" else "PR's checks or a red master"
+            wait = csub.add_parser("wait", help=f"your next step for it can only wait on the {what}: the Stop hook "
+                                                "does not hold you for it; `room` and the panel list it")
+            wait.add_argument("key", metavar=key.upper())
+            wait.add_argument("--for", dest="wait_for", required=True, metavar="WHAT", help="what you wait for")
+            wait.add_argument("--at", help="since when (default: now)")
+            csub.add_parser("wake", help="the wait is over: the step is yours again (any other write about it "
+                                         "does the same)").add_argument("key", metavar=key.upper())
         drop = csub.add_parser("drop", help="remove a row")
         drop.add_argument("key", metavar=key.upper())
         if name == "prs":
@@ -1054,14 +1297,22 @@ def run(args, stdin):
         return 0
     if args.command == "room":
         try:
-            now = room(load(path))
+            state = load(path)
+            now = room(state)
         except (OSError, ValueError, KeyError, TypeError) as err:
             print(f"state file {path} is missing or damaged ({err})", file=sys.stderr)
             return 1
         if args.disk:
             now["disk"] = disk_report(args.disk, now["lowered_reason"] is not None)
             now["lines"].append(now["disk"]["line"])
-        now["lines"] += [f"{owed_line(s)}. Send it, confirm it ran, then: running sent {s['id']}." for s in now["owed"]]
+        waiting = {w["id"] for w in now["waits"]}  # those have their own line: what they wait on, and since when
+        now["lines"] += [f"{owed_line(s)}. " + ("It waits on its start turn (above)." if s["id"] in waiting else
+                                               f"Send it, confirm it ran, then: running sent {s['id']}.")
+                         for s in now["owed"]]
+        now["blocked"] = blocked_report(state)  # the answer `blocked` gives: no need to run both
+        if now["blocked"]["send"]:
+            now["lines"].append(f"Blocked on RH and he has not been told: open your closing message with "
+                                f"`{now['blocked']['line']}`, then run: notified.")
         print(json.dumps(now, ensure_ascii=False) if args.json else "\n".join(now["lines"]))
         return 0
     if args.command == "handoff":
@@ -1078,6 +1329,12 @@ def run(args, stdin):
             print(f"state file {path} is missing or damaged ({err})", file=sys.stderr)
             return 1
         return 0
+    if args.command == "batch":
+        try:
+            return batch(path, args.session or os.environ.get(SESSION_ENV), stdin.read())
+        except Refused as err:
+            print(f"refused: {err}", file=sys.stderr)
+            return 2
     if args.command in COLLECTIONS and args.action == "set":
         args.stdin_text = stdin.read()
     try:

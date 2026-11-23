@@ -1,7 +1,17 @@
 """Lead from the plan: print the backlog plan, then record in the state file what it calls for.
 
-Usage: python -X utf8 -I lead.py --repo OWNER/NAME --areas AREAS.json [--base master]
-       python -X utf8 -I lead.py --snapshot FILE --areas AREAS.json
+Usage: python -X utf8 -I lead.py
+       python -X utf8 -I lead.py --repo OWNER/NAME [--areas AREAS.json] [--base master] [--remember]
+       python -X utf8 -I lead.py --snapshot FILE [--areas AREAS.json]
+
+Defaults, so the plain command is enough: the repo, the area list and the base come from the flag, else the
+environment (MASTER_SESSION_REPO, MASTER_SESSION_AREAS), else the settings file `lead.json` beside the state
+file ({"repo": "OWNER/NAME", "areas": "FILE", "base": "master"}; `--remember` writes it from this run's flags).
+With no area list named anywhere it is read from the repo itself, docs/agents/areas.json; a repo without one
+still gets its plan, with an AREAS notice and every issue outside a spec in `unsorted`.
+GitHub is read again on every run; nothing is cached. A closed issue is in no row. A pinned issue, or one
+labelled `standing`, is bookkeeping and in no row. A ready issue whose PR is open is listed under IN REVIEW
+and gets no row; one whose PR is merged while it stays open is a `held:` question, not offered again.
 
 Only the owning master may run it (a side conversation reads the plan with planner.py).
 It replaces the plan's rows in the state file's queue, go and frozen lists, in ranked order:
@@ -9,7 +19,10 @@ It replaces the plan's rows in the state file's queue, go and frozen lists, in r
   build:<group>      ready     tickets under a spec: start them, past the implement gate, without asking
   go:<group>         needs-rh  standalone ready issues: one go from RH per group (also a `go` row)
   win:#<n>           a quick win: one ready issue, under its own group's start rule (ready under a spec,
-                     needs-rh standalone). The lane comes after the focus and rung 1-2 groups.
+                     needs-rh standalone). The lane comes after the focus, live-Job and rung 1-2 groups.
+
+A live-Job group (an issue labelled `found-in-use`) only ranks earlier, right after the focus list. Its rows
+are the same rows under the same rules: RH's go, the freeze, the holds and the limits all still apply.
   held:#<n>          needs-rh  a held issue, as one question
   grill:<group>      needs-rh  a grill to propose        wayfinder:<group>  needs-rh  a map to propose
   triage:<group>     ready     the next group to triage, one at a time
@@ -40,6 +53,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # `python -I` leaves t
 import planner  # noqa: E402
 import state as store  # noqa: E402
 
+SETTINGS = "lead.json"  # beside the state file: {"repo": "OWNER/NAME", "areas": "FILE", "base": "master"}
+REPO_ENV, AREAS_ENV = "MASTER_SESSION_REPO", "MASTER_SESSION_AREAS"
+PR_OPEN, PR_MERGED = "pr-open", "pr-merged"  # the planner's held reasons for an issue with a linked PR
 GRILL, WIN = "grill:", "win:"
 PLAN_ROWS = (store.BUILD, store.GO, store.HELD, GRILL, WIN, "wayfinder:", "triage:", "spec-check:")
 SESSION_POINTS = 8      # work one build session takes: sizes S 1, M 2, L 4, as in the planner
@@ -97,7 +113,11 @@ def _held_question(number, issue):
     """One held issue as one question with a pick."""
     reasons = issue["held"]
     replaced = next((r for r in reasons if r.startswith("replaced-by")), None)
-    if replaced:
+    merged = next((r for r in reasons if r.startswith(PR_MERGED)), None)
+    if merged:
+        ask = (f"PR {merged.split()[-1]} for it is merged but the issue is still open. Close it, or say what is "
+               "left? Pick: close.")
+    elif replaced:
         ask = f"it is replaced by {replaced.split()[-1]}. Close it? Pick: close."
     elif "verdict-done" in reasons:
         ask = "the overnight check found it already done. Close it? Pick: close."
@@ -189,7 +209,7 @@ def plan_rows(plan, state, area_paths, merged):
     wins_placed = False
     for group in plan["groups"]:
         gid, steps = group["id"], group["next_steps"]
-        if not wins_placed and group["lane"] not in ("focus", "rung"):  # the lane's place in the spec's order
+        if not wins_placed and group["lane"] not in ("focus", "live", "rung"):  # the lane's place in the spec's order
             wins_placed = True
             quick_wins()
         open_grill = open_grills.get(gid)
@@ -223,7 +243,8 @@ def plan_rows(plan, state, area_paths, merged):
                     go.append({"group": gid, "line": line})
         for number in group["held"]:
             issue = plan["issues"][str(number)]
-            if issue["held"] != ["no-verdict"] and number not in asked:
+            waits = issue["held"] == ["no-verdict"] or any(r.startswith(PR_OPEN) for r in issue["held"])
+            if not waits and number not in asked:  # an open PR runs or waits on RH's merge: not a question
                 asked.add(number)
                 add(f"{store.HELD}#{number}", "held", "needs-rh", gid, _held_question(number, issue),
                     f"{', '.join(issue['held'])}: {issue['title']}")
@@ -285,6 +306,11 @@ def render(plan, rows, briefs, state_path, owed=(), landed=(), closeout=None):
     if grills or opened:
         text = f"GRILLS  {len(grills)} to propose: " + ", ".join(grills)
         lines.append((text + ("; open: " + ", ".join(opened) if opened else ""))[:planner.PRINT_WIDTH])
+    review = [f"#{e['number']} PR {r.split()[-1]}" for e in plan["held"] for r in e["reasons"] if r.startswith(PR_OPEN)]
+    if review:
+        shown = ", ".join(review[:TEXT_NUMBERS]) + (f" +{len(review) - TEXT_NUMBERS} more" if len(review) > TEXT_NUMBERS else "")
+        lines.append(f"IN REVIEW  {len(review)} (open PR: running or waiting on RH, no new session): {shown}"
+                     [:planner.PRINT_WIDTH + 40])
     unchecked = sum(entry["reasons"] == ["no-verdict"] for entry in plan["held"])
     his = plan["counts"]["next_step"].get("show-rh", 0)
     lines.append(f"WAITING  {unchecked} wait for the overnight check (no Verdict); {his} are RH's own (ready-for-human); "
@@ -292,13 +318,28 @@ def render(plan, rows, briefs, state_path, owed=(), landed=(), closeout=None):
     return "\n".join(lines) + "\n"
 
 
+def settings(path):
+    """What the settings file holds: any of repo, areas, base. {} when there is none. Raises Unreadable."""
+    if not path.is_file():
+        return {}
+    try:
+        found = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(found, dict):
+            raise ValueError("not a JSON object")
+    except (OSError, ValueError) as error:
+        raise planner.Unreadable(f"settings file {path} is unreadable ({error}); fix or delete it") from None
+    return found
+
+
 def main(argv=None, gh=planner.real_gh):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--repo", help="OWNER/NAME to read with gh")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--repo", help=f"OWNER/NAME to read with gh (default: {REPO_ENV}, then {SETTINGS})")
     source.add_argument("--snapshot", type=Path, help="a file written by planner.py --save-snapshot")
-    parser.add_argument("--areas", type=Path, required=True, help="the repo's area list (JSON)")
-    parser.add_argument("--base", default="master", help="the branch merges land on (default: master)")
+    parser.add_argument("--areas", type=Path, help=f"the repo's area list (JSON; default: {AREAS_ENV}, then "
+                        f"{SETTINGS}, then the repo's {planner.AREAS_IN_REPO})")
+    parser.add_argument("--base", help=f"the branch merges land on (default: {SETTINGS}, then master)")
+    parser.add_argument("--remember", action="store_true", help=f"write this run's repo, area list and base to {SETTINGS}")
     parser.add_argument("--state", help="state file (default: as state.py)")
     parser.add_argument("--session", help="this session's id (default: as state.py)")
     args = parser.parse_args(argv)
@@ -310,19 +351,35 @@ def main(argv=None, gh=planner.real_gh):
         print(f"refused: {err}\nNothing was recorded. To read the plan without leading, run "
               f"{store.RUN}planner.py with the same --repo and --areas.", file=sys.stderr)
         return 2
+    kept_in = path.parent / SETTINGS
     try:
-        areas = planner.load_areas(args.areas)
-        snapshot = planner.load_snapshot(args.repo, args.snapshot, gh)
+        kept = settings(kept_in)
+        repo = None if args.snapshot else args.repo or os.environ.get(REPO_ENV) or kept.get("repo")
+        areas_file = args.areas or os.environ.get(AREAS_ENV) or kept.get("areas")
+        base = args.base or kept.get("base") or "master"
+        if not repo and not args.snapshot:
+            raise planner.Unreadable(f"no repo to read. Run it once with --repo OWNER/NAME --remember (kept in "
+                                     f"{kept_in}), or set {REPO_ENV}")
+        snapshot = planner.load_snapshot(repo, args.snapshot, gh)  # read again on every run: nothing is cached
+        areas, notice = planner.load_areas(areas_file, snapshot["repo"], gh)
     except planner.Unreadable as error:
         print(f"lead: {error}. Nothing was recorded.", file=sys.stderr)
         return 2
+    notices = [notice] if notice else []
+    if args.snapshot:
+        notices.append(f"SNAPSHOT  read from {args.snapshot}, not from GitHub: issues closed since it was saved still "
+                       "show. Leave --snapshot out to read GitHub.")
+    if args.remember and repo:
+        remembered = {"repo": repo, "areas": str(Path(areas_file).resolve()) if areas_file else None, "base": base}
+        kept_in.write_text(json.dumps({k: v for k, v in remembered.items() if v}, indent=1) + "\n", encoding="utf-8")
+        notices.append(f"REMEMBERED  {kept_in}: plain `{store.RUN}lead.py` now reads {repo}")
     area_paths = {a["slug"]: a.get("paths") or [] for a in areas["areas"]}
     plan = planner.build_plan(snapshot, areas)
     seen = {}
 
     def merged(commit):
         if commit not in seen:
-            seen[commit] = merged_since(plan["repo"], commit, args.base, gh)
+            seen[commit] = merged_since(plan["repo"], commit, base, gh)
         return seen[commit]
 
     rows, briefs = plan_rows(plan, state, area_paths, merged)
@@ -334,7 +391,7 @@ def main(argv=None, gh=planner.real_gh):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     limits = "\n".join([f"LIMITS  before any start ({store.RUN}state.py room)", *(f"  {line.strip()}" for line in store.room(state)["lines"])])
-    sys.stdout.write(planner.render(plan) + render(plan, rows, briefs, path, store.owed_commands(state), store.landed_sessions(state),
+    sys.stdout.write("".join(n + "\n" for n in notices) + planner.render(plan) + render(plan, rows, briefs, path, store.owed_commands(state), store.landed_sessions(state),
                                                  (store.closeout_next(state),) if state["closeout"] else None) + limits + "\n")
     return 0
 

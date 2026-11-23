@@ -1,6 +1,6 @@
 # Sub-session brief template
 
-The brief is the `prompt` of `start_session`; the why paragraph also goes in `background`. Pick one brief, then append the standing rules unchanged.
+The brief is the `prompt` of `start_session`; the why paragraph also goes in `background`. Pick one brief, then append the standing rules unchanged. Every brief ends with the same First turn line: the session replies "Received." and its work arrives as the second message.
 
 ## Pointer brief (every Pocock route: build, spec build, triage, grill, wayfinder, prototype)
 
@@ -10,24 +10,33 @@ Pointers only: where the work is, its limits, what done is. The work itself arri
 Master session: <self-contained one-line subject>
 Work: <the issue numbers, or the spec path with its tickets folder and branch; for new work with no issue, RH's goal and why in his words>
 Constraints: <hard limits: repo, deadline, clients, hard stops that apply (see below)>
+Worktree setup: <for a session started with use_worktree: true, the repo's own setup command to run first when the work starts; Agisoft_Coding: "if web/node_modules is missing, run `bash scripts/worktree-deps.sh link <this worktree>`"; else omit>
+Live Job: <for a session working a live Job: "When you file an issue from a live Job, add `found-in-use` only if it affected or blocked the Job's output; put the Job id on the body's first line."; else omit>
 Decisions so far: <ledger gist + link to its home, one per line; "none">
 Open for you to decide: <grill, wayfinder, prototype: the design questions left to this session; else omit>
 Done looks like: <the checkable end, e.g. "PR open for #593 with green checks; report to Master">
 First turn: reply exactly "Received." and end your turn. Read nothing and plan nothing yet. Your next message is a command; the work starts there.
 ```
 
-Test before you send it: the brief names no file to change, no mechanism and no numbered step. A session that could start the work from the brief alone got too much.
+Test before you send it: apart from the Worktree setup line, the brief names no file to change, no mechanism and no numbered step. A session that could start the work from the brief alone got too much.
 
-## Mechanical brief (fix list, merge, cleanup)
+## Mechanical brief (a fix list, merge or cleanup RH approved in his words)
 
-Prescriptive, and the only brief that carries the work: no command follows it. RH's approval verbatim (SKILL.md Control model), the exact list, the steps, the done condition, what to skip and report.
+Only for work RH approved as a list in his own words. Anything that writes code for an issue takes the pointer brief and a Pocock route. The brief carries his approval verbatim (SKILL.md Control model) and the done condition, and ends with the same First turn line. Record the session with `running add <session> --kind mechanical --no-command "<his approval, in short>"`.
 
 ```
 Master session: <self-contained one-line subject>
 Scope: RH approved, his words: "<exact quote>" (<time>)
+Done: <checkable end state>. Anything off the list: stop and report it.
+First turn: reply exactly "Received." and end your turn. Read nothing and plan nothing yet. Your next message is the list; the work starts there.
+```
+
+The list is the second message, an ordinary message sent when the start turn ends. It is prescriptive: the exact steps, what to skip and report.
+
+```
+0. <use_worktree: true only: the repo's worktree setup, as in the pointer brief's Worktree setup line; else omit>
 1. <exact step>
 2. <exact step>
-Done: <checkable end state>. Anything off the list: stop and report it.
 ```
 
 ## Standing rules (append to every brief, unchanged)

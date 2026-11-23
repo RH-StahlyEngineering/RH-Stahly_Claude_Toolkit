@@ -1,6 +1,6 @@
 {
   "name": "master-session-stop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "RH" },
-  "description": "Master session v3: holds the master to its turn-end rule. On Stop it asks the skill's state store and sends the master back once when ready work is untouched or RH has no question."
+  "description": "Master session v3: holds the master to its turn-end rule. On Stop it asks the skill's state store and sends the master back once when ready work is untouched or RH has no question. While the session owns the state file and is not paused, it also puts the fixed turn rules in the system prompt, where a compaction cannot drop them."
 }

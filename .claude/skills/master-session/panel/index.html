@@ -239,13 +239,17 @@ function draw(s, room) {
   var landed = {};                 // the store's own answer on which sessions landed and their next step
   (room.landed || []).forEach(function (l) { landed[l.id] = l; });
   list(runBox, running.map(function (r) {
-    // A row with no command recorded (an older master, a mechanical session) says nothing of it;
-    // the same for a row with no PR.
+    // A row from an older master (no command, no reason, no mark) says nothing of it; the same for a row with no PR.
+    // A step that waits on the session's own turn says what it waits on and since when, so no wait is silent.
     var owed = r.command && !r.command_sent, done = landed[r.id];
+    var wait = r.wait && typeof r.wait === "object" ? r.wait : null;
     var prs = Array.isArray(r.pr) && r.pr.length ? "PR " + r.pr.map(function (n) { return "#" + n; }).join(" ") : "";
-    return { text: r.id, tags: [r.group, r.kind],
-             warn: done ? "landed, next: " + done.next : (owed ? "command not sent" : ""),
+    var warn = done ? "landed, next: " + done.next
+      : (r.command_missing ? "no command, no reason" : (owed && !wait ? "command not sent" : ""));
+    return { text: r.id, tags: [r.group, r.kind], warn: warn,
              meta: [prs ? prs + (done ? " merged" : "") : "", owed ? "owed: " + r.command : "",
+                    r.no_command ? "no command: " + r.no_command : "",
+                    wait ? "master waits since " + (wait.since || "?") + " on " + (wait["for"] || "?") : "",
                     r.deadline ? "time box until " + r.deadline : ""].filter(Boolean).join(" · ") };
   }), "No session running.");
   if (limits.lowered_sessions != null) {
@@ -255,8 +259,11 @@ function draw(s, room) {
   var prs = s.prs || [];
   list(section("PRs waiting on you", room.prs + " of " + room.pr_limit),
     prs.map(function (p) {
+      var wait = p.wait && typeof p.wait === "object" ? p.wait : null;
       return { text: "#" + p.number + " " + (p.line || ""),
-               tags: [p.rung != null ? "rung " + p.rung : "", p.checks ? "checks " + p.checks : ""] };
+               tags: [p.rung != null ? "rung " + p.rung : "", p.checks ? "checks " + p.checks : "",
+                      p.approved ? "approved: the master merges" : ""],
+               meta: wait ? "master waits since " + (wait.since || "?") + " on " + (wait["for"] || "?") : "" };
     }), "None.");
 
   list(section("Sessions waiting on you", String((s.waiting || []).length)),
