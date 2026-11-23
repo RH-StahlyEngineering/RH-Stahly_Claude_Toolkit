@@ -1,0 +1,126 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Toole CH Field Card</title>
+<style>
+@page{size:letter;margin:0.45in}
+body{font:9.6pt/1.3 Arial,Helvetica,sans-serif;color:#000;margin:0}
+h1{font-size:14pt;margin:0 0 2px}
+h2{font-size:10.5pt;margin:9px 0 3px;padding:2px 5px;background:#000;color:#fff}
+p,ul,ol{margin:2px 0}
+ul,ol{padding-left:16px}
+li{margin:1px 0}
+table{border-collapse:collapse;width:100%;margin:3px 0;font-size:9pt}
+td,th{border:1px solid #000;padding:2px 4px;vertical-align:top;text-align:left}
+th{background:#ddd}
+.mono{font-family:Consolas,"Courier New",monospace}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.warn{border:2px solid #000;padding:3px 6px;margin:4px 0;font-weight:bold}
+.box{display:inline-block;width:9px;height:9px;border:1px solid #000;margin-right:4px;vertical-align:-1px}
+.small{font-size:8.5pt}
+.pb{break-before:page}
+</style></head><body>
+
+<h1>FIELD CARD: Toole County Courthouse Retaining Walls, job 2071-07D26</h1>
+<p><b>Shelby MT.</b> Tue 11/10 and Wed 11/11/2026. Crew: Ryan + Matt Craig (separate vehicles). Contract: term PSA, T&amp;M, est. $19,000. Prepared 11/6. Updated 11/6 with final targets.</p>
+
+<h2>SCOPE (10/2 SOW)</h2>
+<ul>
+<li>Limits: Exhibit A, 5.63 ac. Whole courthouse block, 1st St S, Maple Ave, 2nd St S frontages, west lots and alley.</li>
+<li>Drone photogrammetry (nadir + obliques, walls from photos) + conventional pickup. 811 paint: rims/inverts on MH and inlets, valves, hydrants, poles.</li>
+<li>Boundary: search and tie found monuments. <b>Set nothing. No COS.</b></li>
+<li>Deliverable: Civil 3D + signed topo PDF, 1-ft contours, 1 revision, 30 working days from NTP. Excluded: geotech, boring staking.</li>
+</ul>
+
+<h2>DATUM AND GRID</h2>
+<ul>
+<li><b>Horizontal: RMTCRS Milk River LDP</b>, NAD83(2011), <b>international ft</b> (EPSG 7121). LCC, origin 48°30'N, CM 111°W, FN 200,000 m, FE 150,000 m, k0 1.000145. About −13 ppm at site (grid ≈ ground). Contract says MT SPC, so give an SPC transform on request.</li>
+<li><b>Vertical: NAVD88, GEOID18.</b> Tie to NGS <b>TL0300 "V 425"</b>: disk on the courthouse <b>north entry landing, top of steps, 4.5 ft E of the door centerline</b>. NAVD88 <b>3351.57 ft</b> (1st-order). Last recovered 2009, so confirm it.</li>
+<li>Network: <b>MTSRN NWMT subnet VRS</b> (NCMT fallback). No MTSRN station in Shelby. Subscription and cell checked (Ryan 11/6).</li>
+</ul>
+
+<h2>BASE: PT 60 PRIMARY, CP1 FALLBACK</h2>
+<table>
+<tr><th>Pt</th><th>Mark (2019 desc.)</th><th>Lat / Lon NAD83(2011)</th><th>MT SPC grid, ift (N / E)</th><th>Milk River, ift (N / E)*</th><th>Elev NAVD88 (GEOID18)</th></tr>
+<tr><td><b>60</b><br>primary</td><td>FND 2" MDT ALUMC 2019</td><td class="mono">48.50505063<br>−111.85508541</td><td class="mono">1559874.737<br>1397787.626</td><td class="mono">659169.58<br>284797.94</td><td class="mono">3284.45</td></tr>
+<tr><td><b>1</b><br>fallback</td><td>CP1 RPC 1/2" STAHLY (2019 OPUS base)</td><td class="mono">48°30'14.87207"<br>111°51'10.10491"W</td><td class="mono">1559522.922<br>1398329.542</td><td class="mono">658827.92<br>285346.63</td><td class="mono">3279.75</td></tr>
+</table>
+<p class="small">CP1 OPUS 4/25/2019: 4.4 hr, ellipsoid height 985.018 m, ortho 999.671 m on GEOID12B. All elevations here are orthometric NAVD88. 2019 values moved to GEOID18 (N −14.650 vs −14.653 m at CP1, −14.652 vs −14.655 at 60): −0.01 ft. 2019 job was ground-scaled about CP1 by 1.0004209515; values above are unscaled to grid. *Milk River values computed, not yet checked in TBC.<br>
+Pt 60: about 918 ft NE of courthouse, 8.7 ft from CP2 SPIKE. CP1: about 1,460 ft E/SE. <b>2019 inverse 1→60: 646.10 ft grid (646.37 ground), az 302°59'31", ΔZ +4.70 ft.</b></p>
+<ol>
+<li>Find pt 60 and CP1. Condition and photo of each. If 60 is disturbed, use CP1 as the base.</li>
+<li><b>VRS (NWMT) on both</b>: 2 obs ≥3 min each, fixed, PDOP &lt;3. Compare with the 2019 inverse above (expect ≤0.10 ft H).</li>
+<li>Base on pt 60 (from its VRS position). <b>Log static all day, both days</b> for OPUS. Measure HI twice.</li>
+<li>Rover check-in on CP1 from the base. Then V 425 (2 obs + robot if possible).</li>
+<li>Wed: same base on pt 60, same HI method. Check-in on CP1 and V 425 again.</li>
+</ol>
+
+<h2>SITE CONTROL AND TARGETS</h2>
+<ul>
+<li>Site CPs: mag nails + shiner (no rebar, set nothing that looks like a monument). 2 RTK obs ≥1 hr apart + robot traverse closed between them. Run the robot from these under trees and at the wall faces.</li>
+<li><b>Aerial targets: 5</b> (Ryan 11/6). Set by eye at these spots (from aerial, ±few ft). Paint on asphalt (avoid 811 colors), panels on grass. DC import (PNEZD, same values as this table): <span class="mono">3-To_Field\TooleCH_field_pts_PNEZD.csv</span>.</li>
+</ul>
+<table>
+<tr><th>Pt</th><th>Lat</th><th>Lon</th><th>Grid N / E</th><th>Elev</th><th>Type</th></tr><!--PTS--><!--/PTS--></table>
+<p class="small">Height spread 30.4 ft (3313.5–3343.9). DTM elevations are orthometric NAVD88 (USGS 3DEP 2020 lidar, GEOID18) and only good to about ±0.5 ft, for navigation. Shoot the real values. Navigate to each with the DC (stake to lat/lon), then shift to the nearest clear, flat spot.</p>
+<ul>
+<li>Shoot each target RTK 2× (start / end of day) + robot on 2–3. Extra vertical checks: V 425, wall top and toe by robot.</li>
+<li>Targets stay out until all 3 flights are done.</li>
+</ul>
+
+<div class="pb"></div>
+<h2>FLIGHT (fly early Tue, before cars fill 1st St S)</h2>
+<ul>
+<li>Plans: <span class="mono">TooleCH_nadir90</span> (9.6 min), <span class="mono">TooleCH_oblA45</span> (10.2), <span class="mono">TooleCH_oblB45</span> (12.2). 200 ft AGL, 9.6 mm GSD, 6.1 m/s, ~600 photos / ~36 GB. 3 batteries. Open and save each in AMC before pushing.</li>
+<li>Camera: LR1 + 24 mm. <b>Shutter priority, 1/1000 s</b>, Auto ISO, focus Infinity/Fixed, RAW to SD (Astro ≥ v2.2). Trigger ≥2 s.</li>
+<li>HOME (confirm): 48.504492, −111.859203, County west lot. Check the gimbal pitch readout on the first leg; use AMC Pitch snap if needed.</li>
+<li>Airspace: KSBX ~2 mi N, Class G below 700 ft. <b>Confirm in B4UFLY/Aloft.</b> Call on CTAF 122.8 before launch and when done.<br><b>Launch:</b> “Shelby traffic, unmanned aircraft operating over the Toole County Courthouse, two and a half miles south-southeast of the Shelby airport, at or below four hundred feet above ground, for the next forty-five minutes. Shelby.”<br><b>Done:</b> “Shelby traffic, unmanned aircraft operations at the Toole County Courthouse are complete. Shelby.”</li>
+</ul>
+
+<h2>811 AND UTILITIES</h2>
+<ul>
+<li>5 Engineering tickets, start <b>11/11 12:01 AM</b>. Tickets: <b>26180261</b> (318 1st St S), <b>26180262</b> (307 2nd St S), <b>26180263</b> (226 1st St S), <b>26180264</b> (310 1st St S), <b>26180265</b> (323 2nd St S). Members: 3 Rivers Comm, Marias River Electric, Northern Telephone, CenturyLink (tickets 1–4), Shelby Gas, City of Shelby (water and sewer).</li>
+<li>Private lines (site lighting, irrigation, building-to-building) <b>are not located</b>; treat as unknown.</li>
+<li>Paint pickup Wed, end of day. All marks out by end of Wed. Open every MH/inlet for rims, inverts, pipe size and direction.</li>
+</ul>
+
+<h2>SCHEDULE</h2>
+<div class="cols">
+<div><b>Tue 11/10</b>
+<ol>
+<li>Find pt 60 and CP1, VRS both, base on 60, start static.</li>
+<li>Set site CPs, set targets T1–T5, shoot them.</li>
+<li>Fly nadir, oblA, oblB.</li>
+<li>V 425 tie, robot traverse, check shots.</li>
+<li>Monument search and ties.</li>
+<li>Pickup away from utilities: curbs (sections every 15–25 m + drives/returns), walls top and toe, stairs, doors (finished floors), under-canopy ground.</li>
+<li>PM: second obs on CPs and targets. Pull panels.</li>
+</ol></div>
+<div><b>Wed 11/11</b>
+<ol>
+<li>Base on pt 60, check-in CP1 and V 425.</li>
+<li>Remaining pickup and cleanup (see checklist).</li>
+<li>811 paint pickup, measure-downs, MH/inlet inverts.</li>
+<li>Close-out check-ins. Stop static. Confirm nothing is missed before leaving.</li>
+</ol></div>
+</div>
+
+<h2>PICKUP PRIORITIES (exhibit on page 3; full list: _AI\site_walk\CONVENTIONAL_PICKUP_LIST.md)</h2>
+<ul class="small">
+<li>Under the deciduous canopy (drone sees only leaves): 1st St S gravel bench and lower-wall toe, Maple Ave gutter/walk/stone wall, library frontage, south and NW lawns, 318/310 front yards.</li>
+<li>Critical match-existing: 1st St S asphalt ramp (A-023), wall ends at 1st/Maple, Maple N driveway (B-007), upper-lot wall-top edge.</li>
+<li>Courthouse entry stairs (every nosing and landing), fountain, ~20 doors, 6–7 stair sets. Evergreens: blue spruce by the entry, conifer by the west wall.</li>
+<li>Lids found: 2 MH + 1 new inlet at 1st St S / 4th Ave (2024 asphalt). Valve cluster opposite the hydrant on 1st St S.</li>
+<li>Confirm: is the east building the library or the treasurer?</li>
+</ul>
+
+<h2>BOUNDARY</h2>
+<ul>
+<li>Research at the Toole courthouse (deeds, plats). Plats: Town of Shelby, Shelby Second Add, Zimmermans First Add. Legal (block/lots, Sec-T-R) still to be read.</li>
+<li>Search and tie the block and lot corners. 2 obs each. Photo + description. <b>Set nothing.</b> A COS is an additional service.</li>
+</ul>
+
+<h2>OPEN BEFORE TUESDAY</h2>
+<p><span class="box"></span>Set up the .job on the data collector (Milk River, import PNEZD) &nbsp; <span class="box"></span>B4UFLY/Aloft &nbsp; <span class="box"></span>Courthouse research (deeds, plats) → monument search list</p>
+<div class="pb"></div>
+<h2>PICKUP EXHIBIT (zones and points approximate, from aerial)</h2>
+<img src="pickup_exhibit.png" style="width:100%" alt="Conventional pickup exhibit">
+</body></html>
