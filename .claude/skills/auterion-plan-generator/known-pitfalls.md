@@ -212,6 +212,12 @@ Incident: 2026-06-29. v5/v6 of Fergus50_S09_AB used a log spiral R_start=25 → 
 
 **Rule:** before building, ask where the pilot will stand and set `plannedHomePosition` (lat, lon, ground elevation from the DEM) to that spot. Every pilot note says: if you launch anywhere else, move AMC's home to your takeoff spot first.
 
+## 20a. First line must start at the end nearest HOME
+
+**Observed 2026-11-24 (US-2 Havre, RH flying).** HOME was moved to the east end; the plan was rebuilt but nadir90_1 still started line 1 at the far west end, so the drone transited ~2,300 ft across the site before the first photo. RH: "How does that make any sense?"
+
+**Rule:** whenever HOME is set or moved, re-order every flight so its first line starts at the line end nearest HOME (reverse the line order and/or direction as needed), and ideally its last line ends near HOME too. Check after every build: distance HOME → first trigger-on waypoint, and last trigger-off waypoint → HOME; flag any transit over ~300 ft to RH before saving.
+
 ## 21. Lidar with no building or tree classes: split by return count before line-of-sight checks
 
 **Observed 2026-11-12 (Toole County Courthouse).** The USGS 3DEP 2020 tile had only class 1 (unclassified) and class 2 (ground), so a check that blocked only on class 6 (building) let sight lines run straight through the courthouse.

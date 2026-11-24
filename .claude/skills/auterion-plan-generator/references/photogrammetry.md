@@ -22,7 +22,7 @@ Each step ends when RH has answered; the sweep always runs before the build.
 3. **Run the sweep** (`py tradeoff_sweep.py`) and show the ranked table.
 4. **RH picks a row.**
 5. **Build** with `camera_plan_set.py` from that row's config. A "refused" report (exit 2) means a path left the DEM: get a bigger DEM (see run-outs below).
-6. **Checks:** every flight under the payload limit; first-leg gimbal check (below); wall check when a building is the target.
+6. **Checks:** every flight starts its first line at the end nearest HOME (pitfall #20a; re-order after any HOME move); every flight under the payload limit; first-leg gimbal check (below); wall check when a building is the target.
 7. **3D view** (`viz3d`) for RH to look over.
 8. **Save** with `save_to`; an older set of the same name moves to `superseded_<date>_<reason>/`.
 
