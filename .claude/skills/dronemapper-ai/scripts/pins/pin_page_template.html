@@ -1,0 +1,294 @@
+<title>SB536 Target Pins</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: photo list on the left, one large zoomed crop on the right; stacks on phones. */
+:root {
+  --bg: #f3f4f1; --panel: #ffffff; --fg: #1d2421; --muted: #5d6a64; --line: #d6dbd6;
+  --accent: #0f6e5c; --accent-fg: #ffffff; --warn: #a3520b; --ok: #2f7a3b; --mark: #ffd200;
+  --pick: #e23b3b; --fit: #2ab24a;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141917; --panel: #1c2320; --fg: #e4ebe7; --muted: #9aa8a1; --line: #2e3833;
+  --accent: #3fb59b; --accent-fg: #0b1512; --warn: #e3974d; --ok: #6cc77b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141917; --panel: #1c2320; --fg: #e4ebe7; --muted: #9aa8a1; --line: #2e3833;
+  --accent: #3fb59b; --accent-fg: #0b1512; --warn: #e3974d; --ok: #6cc77b; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 14px; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px 32px }
+h1 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance }
+.sub { color: var(--muted); margin: 4px 0 0; max-width: 70ch }
+header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; margin-bottom: 16px }
+.progress { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted) }
+.progress b { color: var(--fg) }
+.status { min-height: 20px; color: var(--muted); font-size: 13px }
+.status.err { color: var(--warn) }
+.wrap { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 16px; align-items: start }
+@media (max-width: 760px) { .wrap { grid-template-columns: minmax(0, 1fr) } .list { max-height: 260px } }
+.list { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; max-height: calc(100vh - 140px); overflow-y: auto }
+.grp { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 10px 12px 4px; position: sticky; top: 0; background: var(--panel) }
+.row { display: flex; gap: 8px; align-items: center; width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; padding: 6px 12px; cursor: pointer; border-left: 3px solid transparent }
+.row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent) }
+.row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px }
+.row.cur { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent) }
+.row .ph { font-family: var(--mono); font-size: 12px; flex: 1; min-width: 0 }
+.sc { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums }
+.dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--muted); flex: none }
+.dot.set { background: var(--ok); border-color: var(--ok) }
+.dot.skip { background: var(--warn); border-color: var(--warn) }
+.main { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: grid; gap: 12px; min-width: 0 }
+.title { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline }
+.title h2 { font-size: 16px; margin: 0; font-weight: 600 }
+.title .meta { font-family: var(--mono); font-size: 12px; color: var(--muted) }
+.stage { position: relative; width: 100%; max-width: 672px; aspect-ratio: 1; background: #000; cursor: crosshair; touch-action: none; user-select: none }
+.stage { overflow: hidden }
+.stage svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none }
+button.b.sm { padding: 3px 9px; min-width: 32px }
+.lbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em }
+.zoomv, .stepv { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 64px; text-align: center }
+.pad { display: grid; grid-template-columns: repeat(3, auto); gap: 2px; align-items: center; justify-items: center }
+select { font: inherit; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+button.b { font: inherit; font-weight: 500; border: 1px solid var(--line); background: var(--panel); color: var(--fg); padding: 7px 12px; border-radius: 5px; cursor: pointer }
+button.b:hover { border-color: var(--accent) }
+button.b:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+button.b.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg) }
+button.b:disabled { opacity: .5; cursor: default }
+label.t { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; cursor: pointer }
+.coords { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; display: grid; grid-template-columns: auto auto; gap: 2px 14px; width: max-content; max-width: 100% }
+.coords span:nth-child(odd) { color: var(--muted) }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted) }
+.sw { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px }
+textarea { font: inherit; width: 100%; min-height: 54px; resize: vertical; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--fg); padding: 6px 8px }
+.help { font-size: 12px; color: var(--muted); margin: 0 }
+kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px }
+</style>
+
+<header>
+  <div>
+    <h1>SB536 Target Pins</h1>
+    <p class="sub">Click the exact point where the four quadrants meet. Your positions are saved for Claude to compare against its picks and fits, so it learns where it goes wrong.</p>
+  </div>
+  <div class="progress" id="progress">Loading…</div>
+</header>
+
+<div class="wrap">
+  <nav class="list" id="list" aria-label="Photos"></nav>
+  <section class="main" aria-live="polite">
+    <div class="title"><h2 id="ttl"></h2><span class="meta" id="meta"></span></div>
+    <div class="stage" id="stage" role="img" aria-label="Zoomed target crop">
+      <svg id="ov" viewBox="0 0 96 96" preserveAspectRatio="none"><image id="img" x="0" y="0" width="96" height="96" style="image-rendering:pixelated" preserveAspectRatio="none"></image><g id="marks"></g></svg>
+    </div>
+    <div class="controls">
+      <span class="lbl">Zoom</span>
+      <button class="b sm" id="zoomOut" aria-label="Zoom out">−</button>
+      <span class="zoomv" id="zoomv"></span>
+      <button class="b sm" id="zoomIn" aria-label="Zoom in">+</button>
+      <button class="b sm" id="recenter">Centre on mark</button>
+      <span class="lbl" style="margin-left:12px">Nudge</span>
+      <div class="pad">
+        <span></span><button class="b sm" data-n="0,-1" aria-label="Nudge up">▲</button><span></span>
+        <button class="b sm" data-n="-1,0" aria-label="Nudge left">◀</button><span class="stepv" id="stepv"></span><button class="b sm" data-n="1,0" aria-label="Nudge right">▶</button>
+        <span></span><button class="b sm" data-n="0,1" aria-label="Nudge down">▼</button><span></span>
+      </div>
+      <label class="t">Step
+        <select id="step"><option value="0.05">0.05 px</option><option value="0.1" selected>0.1 px</option><option value="0.25">0.25 px</option><option value="0.5">0.5 px</option><option value="1">1 px</option></select>
+      </label>
+    </div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--mark)"></i>Your position</span>
+      <span><i class="sw" style="background:var(--pick)"></i>Claude pick (red)</span>
+      <span><i class="sw" style="background:var(--fit)"></i>Claude fit (green)</span>
+    </div>
+    <div class="controls">
+      <label class="t"><input type="checkbox" id="showRef" checked> Show Claude's marks</label>
+      <label class="t"><input type="checkbox" id="showGrid"> 1 px grid</label>
+    </div>
+    <div class="coords" id="coords"></div>
+    <textarea id="note" placeholder="Note (optional): why this point, or why the panel can't be used"></textarea>
+    <div class="controls">
+      <button class="b primary" id="save">Save position</button>
+      <button class="b" id="skip">Not usable</button>
+      <button class="b" id="useRed">Use red</button>
+      <button class="b" id="useGreen">Use green</button>
+      <button class="b" id="prev">Previous</button>
+      <button class="b" id="next">Next</button>
+    </div>
+    <p class="help">Click or drag to place. On a touch screen the cross sits just above your finger: touch below the junction and slide until the cross lands on it. Arrow keys or the pad nudge by the step (<kbd>Shift</kbd> ×10). Mouse wheel or <kbd>+</kbd>/<kbd>−</kbd> zooms. <kbd>Enter</kbd> or a double tap on the image saves and moves on; a double tap leaves the cross where it was.</p>
+    <div class="status" id="status"></div>
+  </section>
+</div>
+
+<script>
+/*PINS*/
+const $ = (id) => document.getElementById(id);
+const byId = Object.fromEntries(PINS.map((p) => [p.id, p]));
+const saved = {};           // id -> stored doc body
+let cur = 0, mark = null, db = null, writable = true;
+
+function setStatus(msg, err) { const s = $("status"); s.textContent = msg; s.className = "status" + (err ? " err" : ""); }
+
+function buildList() {
+  const list = $("list"); list.textContent = "";
+  const h = document.createElement("div"); h.className = "grp"; h.textContent = "Most uncertain first"; list.appendChild(h);
+  PINS.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.className = "row"; b.type = "button"; b.dataset.i = i; b.id = "row-" + i;
+    const d = document.createElement("span"); d.className = "dot";
+    const t = document.createElement("span"); t.className = "ph";
+    t.textContent = (p.job === "mcd" ? "McD" : "RF") + " T" + p.target + " " + p.photo.slice(7);
+    const sc = document.createElement("span"); sc.className = "sc";
+    sc.textContent = p.score >= 99 ? "no fit" : p.score.toFixed(1) + " px";
+    b.append(d, t, sc); b.addEventListener("click", () => go(i));
+    list.appendChild(b);
+  });
+}
+function refreshList() {
+  let n = 0, k = 0;
+  PINS.forEach((p, i) => {
+    const r = $("row-" + i); const s = saved[p.id];
+    r.classList.toggle("cur", i === cur);
+    const d = r.firstChild; d.className = "dot" + (s ? (s.status === "skip" ? " skip" : " set") : "");
+    if (s) { n++; if (s.status === "skip") k++; }
+  });
+  $("progress").innerHTML = "<b>" + n + "</b> of " + PINS.length + " placed" + (k ? " · " + k + " not usable" : "");
+}
+
+// View window: W native pixels square, centred on (vx, vy) in crop coordinates.
+const ZOOMS = [96, 48, 32, 24, 16, 12, 8];
+let zi = 4, vx = 48, vy = 48;
+function W() { return ZOOMS[zi]; }
+function setView() {
+  const w = W(); vx = Math.min(96 - w / 2, Math.max(w / 2, vx)); vy = Math.min(96 - w / 2, Math.max(w / 2, vy));
+  $("ov").setAttribute("viewBox", `${vx - w / 2} ${vy - w / 2} ${w} ${w}`);
+  $("zoomv").textContent = Math.round(672 / w) + "× · " + w + " px";
+}
+// Thin cross with an open centre, sized to the zoom so it never hides the junction.
+function cross(x, y, color, w) {
+  const L = W() * 0.07, g = W() * 0.018;
+  // w is in image pixels: 0.1 px lines stay 0.1 of a photo pixel at every zoom.
+  return `<g stroke="${color}" stroke-width="${w}" stroke-linecap="butt">
+    <line x1="${x - L}" y1="${y}" x2="${x - g}" y2="${y}"/><line x1="${x + g}" y1="${y}" x2="${x + L}" y2="${y}"/>
+    <line x1="${x}" y1="${y - L}" x2="${x}" y2="${y - g}"/><line x1="${x}" y1="${y + g}" x2="${x}" y2="${y + L}"/></g>`;
+}
+function draw() {
+  const p = PINS[cur]; let s = "";
+  if ($("showGrid").checked) {
+    for (let k = 1; k < 96; k++) s += `<line x1="${k}" y1="0" x2="${k}" y2="96" stroke="rgba(0,255,255,.22)" stroke-width="1" vector-effect="non-scaling-stroke"/><line x1="0" y1="${k}" x2="96" y2="${k}" stroke="rgba(0,255,255,.22)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  }
+  // pixel (u,v) maps to crop coordinate (u - left, v - top); pixel centres sit at +0.5
+  const toC = (uv) => [uv[0] - p.left + 0.5, uv[1] - p.top + 0.5];
+  if ($("showRef").checked) {
+    const [rx, ry] = toC(p.pick); s += cross(rx, ry, "var(--pick)", 0.1);
+    if (p.fitOk) { const [gx, gy] = toC(p.fit); s += cross(gx, gy, "var(--fit)", 0.1); }
+  }
+  if (mark) { const [mx, my] = toC(mark); s += cross(mx, my, "var(--mark)", 0.1); }
+  $("marks").innerHTML = s; setView();
+  $("stepv").textContent = (+$("step").value) + " px";
+  const f = (a) => a ? a[0].toFixed(2) + ", " + a[1].toFixed(2) : "—";
+  const d = (a, b) => a && b ? Math.hypot(a[0] - b[0], a[1] - b[1]).toFixed(2) + " px" : "—";
+  $("coords").innerHTML = `<span>Your position</span><span>${f(mark)}</span>
+    <span>Red pick</span><span>${f(p.pick)} · ${d(mark, p.pick)} from yours</span>
+    <span>Green fit</span><span>${p.fitOk ? f(p.fit) + " · " + d(mark, p.fit) + " from yours" : "fit failed"}</span>`;
+}
+function go(i) {
+  cur = (i + PINS.length) % PINS.length;
+  const p = PINS[cur]; const s = saved[p.id];
+  $("img").setAttribute("href", p.img);
+  $("ttl").textContent = p.jobName + " · Target " + p.target;
+  $("meta").textContent = p.photo + " · " + (p.reasons && p.reasons.length ? p.reasons.join("; ") : "uncertainty " + (p.score >= 99 ? "no saddle found" : p.score.toFixed(2) + " px"));
+  mark = s && s.status === "set" ? [s.u, s.v] : null;
+  const c = mark || (p.fitOk ? [(p.pick[0] + p.fit[0]) / 2, (p.pick[1] + p.fit[1]) / 2] : p.pick);
+  vx = c[0] - p.left + 0.5; vy = c[1] - p.top + 0.5;
+  $("note").value = s && s.note ? s.note : "";
+  draw(); refreshList();
+  $("row-" + cur).scrollIntoView({ block: "nearest" });
+}
+// On touch, the cross sits this many screen pixels above the finger so the thumb never hides it.
+const TOUCH_LIFT = 72;
+function placeFromEvent(e) {
+  const r = $("stage").getBoundingClientRect(), p = PINS[cur];
+  const w = W();
+  const y = e.pointerType === "touch" ? e.clientY - TOUCH_LIFT : e.clientY;
+  const cx = vx - w / 2 + (e.clientX - r.left) / r.width * w, cy = vy - w / 2 + (y - r.top) / r.height * w;
+  mark = [p.left + cx - 0.5, p.top + cy - 0.5]; draw();
+}
+function nudge(dx, dy) {
+  const st = +$("step").value;
+  if (!mark) { const p = PINS[cur]; mark = (p.fitOk ? p.fit : p.pick).slice(); }
+  mark[0] += dx * st; mark[1] += dy * st; draw();
+}
+document.querySelectorAll("[data-n]").forEach((b) => b.addEventListener("click", () => { const [x, y] = b.dataset.n.split(",").map(Number); nudge(x, y); }));
+$("zoomIn").addEventListener("click", () => { zi = Math.min(ZOOMS.length - 1, zi + 1); draw(); });
+$("zoomOut").addEventListener("click", () => { zi = Math.max(0, zi - 1); draw(); });
+$("recenter").addEventListener("click", () => { const p = PINS[cur]; if (mark) { vx = mark[0] - p.left + 0.5; vy = mark[1] - p.top + 0.5; draw(); } });
+$("step").addEventListener("change", draw);
+$("stage").addEventListener("wheel", (e) => { e.preventDefault(); zi = Math.max(0, Math.min(ZOOMS.length - 1, zi + (e.deltaY < 0 ? 1 : -1))); draw(); }, { passive: false });
+let dragging = false;
+// Double-tap (or double-click) saves. The cross stays where it was before the double tap:
+// the first tap's move is undone, the second tap never places.
+let lastDown = null; // {t, x, y, before}
+$("stage").addEventListener("pointerdown", (e) => {
+  const now = performance.now();
+  if (lastDown && now - lastDown.t < 350 && Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) < 40) {
+    mark = lastDown.before ? lastDown.before.slice() : mark;
+    lastDown = null; dragging = false; draw(); save("set"); return;
+  }
+  lastDown = { t: now, x: e.clientX, y: e.clientY, before: mark ? mark.slice() : null };
+  dragging = true; $("stage").setPointerCapture(e.pointerId); placeFromEvent(e);
+});
+$("stage").addEventListener("pointermove", (e) => { if (dragging) placeFromEvent(e); });
+$("stage").addEventListener("pointerup", () => { dragging = false; });
+$("showRef").addEventListener("change", draw);
+$("showGrid").addEventListener("change", draw);
+$("useRed").addEventListener("click", () => { mark = PINS[cur].pick.slice(); draw(); });
+$("useGreen").addEventListener("click", () => { if (PINS[cur].fitOk) { mark = PINS[cur].fit.slice(); draw(); } });
+$("prev").addEventListener("click", () => go(cur - 1));
+$("next").addEventListener("click", () => go(cur + 1));
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "TEXTAREA") return;
+  const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  if (moves[e.key]) { e.preventDefault(); const k = e.shiftKey ? 10 : 1; nudge(moves[e.key][0] * k, moves[e.key][1] * k); }
+  else if (e.key === "+" || e.key === "=") { zi = Math.min(ZOOMS.length - 1, zi + 1); draw(); }
+  else if (e.key === "-") { zi = Math.max(0, zi - 1); draw(); }
+  else if (e.key === "Enter") { e.preventDefault(); save("set"); }
+});
+
+async function save(status) {
+  const p = PINS[cur];
+  if (status === "set" && !mark) { setStatus("Click the junction first."); return; }
+  const body = { job: p.job, target: p.target, photo: p.photo, status, note: $("note").value.trim(),
+    pick: p.pick, fit: p.fitOk ? p.fit : null, updatedAt: new Date().toISOString() };
+  if (status === "set") { body.u = +mark[0].toFixed(2); body.v = +mark[1].toFixed(2); }
+  if (!db) { setStatus("Saving needs you signed in to claude.ai; this position was not saved.", true); return; }
+  if (!writable) { setStatus("You can view these pins but not save them.", true); return; }
+  try {
+    $("save").disabled = $("skip").disabled = true;
+    await db.collection("pins").doc(p.id).set(body);
+    saved[p.id] = body; setStatus((status === "skip" ? "Marked not usable: " : "Saved: ") + p.photo);
+    go(cur + 1);
+  } catch (err) {
+    if (err && err.code === "invalid_argument") { writable = false; setStatus("You can view these pins but not save them.", true); }
+    else setStatus("Couldn't save (" + (err && err.code || "error") + "). Try again.", true);
+  } finally { $("save").disabled = $("skip").disabled = false; }
+}
+$("save").addEventListener("click", () => save("set"));
+$("skip").addEventListener("click", () => save("skip"));
+
+buildList(); go(0);
+(async () => {
+  try { db = await window.claude?.use?.("db"); } catch { db = null; }
+  if (!db) { setStatus("Sign in to claude.ai to save positions. You can still look through every crop."); return; }
+  const timer = setTimeout(() => setStatus("Saved positions can't be reached yet; new saves will still go through."), 10000);
+  db.collection("pins").onSnapshot((snap) => {
+    if (!snap.metadata.fromCache) clearTimeout(timer);
+    snap.docs.forEach((d) => { if (byId[d.id]) saved[d.id] = d.data(); });
+    const p = PINS[cur], s = saved[p.id];
+    if (s && !mark && s.status === "set") mark = [s.u, s.v];
+    draw(); refreshList();
+  }, (err) => { clearTimeout(timer); setStatus("Saved positions stopped updating (" + err.code + ").", true); });
+})();
+</script>
